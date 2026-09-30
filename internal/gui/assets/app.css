@@ -544,6 +544,7 @@ body.window .field.solo { grid-column: auto; }
 .led .faint { color: var(--faint); }
 .led .muted { color: var(--muted); }
 .led .when { color: var(--muted); }
+.led .when .text { padding: 0; font: inherit; }
 .led .model, .led .where { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 .led .where { color: var(--fg-2); }
 .led .cost { color: var(--green); }

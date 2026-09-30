@@ -6892,12 +6892,23 @@ function renderUsage() {
 // server pages it (/api/usage/requests) and saves it whole as CSV.
 
 let ledger = null; // the page shown: { rows, offset, total, agents, …totals }
-let ledOffset = 0, ledAgent = "", ledFailed = false, ledQuery = "";
+let ledOffset = 0, ledAgent = "", ledFailed = false, ledQuery = "", ledRoute = 0;
 const LED_PAGE = 100;
+
+window.openUsageRoute = (id) => {
+  ledRoute = id;
+  ledOffset = 0; ledAgent = ""; ledFailed = false; ledQuery = "";
+  $("#ledQ").value = "";
+  period = "all";
+  usageTab = "requests";
+  ledger = null;
+  show("usage");
+};
 
 function ledParams(extra) {
   const q = new URLSearchParams({ period });
   if (ledAgent) q.set("agent", ledAgent);
+  if (ledRoute) q.set("route", ledRoute);
   if (ledFailed) q.set("failed", "1");
   if (ledQuery.trim()) q.set("q", ledQuery.trim());
   if (extra) for (const k in extra) q.set(k, extra[k]);
@@ -6997,12 +7008,16 @@ function renderLedger() {
     if (l.errors) sum.push(t("{n} failed", { n: l.errors }));
   }
   $("#ledSum").textContent = sum.join(" · ");
+  const routeFilter = $("#ledRoute");
+  routeFilter.hidden = !ledRoute;
+  routeFilter.textContent = t("Request #{id} · Clear", { id: ledRoute });
+  routeFilter.onclick = () => { ledRoute = 0; ledOffset = 0; loadLedger().catch((e) => status(e.message, "err")); };
 
   const wrap = $("#ledWrap");
   const pager = $("#ledPager");
   if (!l.total) {
     wrap.classList.add("none");
-    const filtered = ledAgent || ledFailed || ledQuery.trim();
+    const filtered = ledRoute || ledAgent || ledFailed || ledQuery.trim();
     const none = { today: "No calls today.", "7d": "No calls in the last 7 days.", "30d": "No calls in the last 30 days.", all: "No calls yet." }[period];
     wrap.replaceChildren(el("div", "led-none", filtered ? t("No requests match these filters.") : t(none)));
     pager.hidden = true;
@@ -7025,7 +7040,12 @@ function renderLedger() {
       tr.append(c);
       return c;
     };
-    td(ledTime(r.t), "when", new Date(r.t).toLocaleString(locale === "zh" ? "zh-CN" : "en"));
+    const when = r.route_id ? el("button", "text", ledTime(r.t)) : ledTime(r.t);
+    if (r.route_id) {
+      when.title = t("View routing");
+      when.onclick = () => window.openRoute(r.route_id).catch((e) => status(e.message, "err"));
+    }
+    td(when, "when", new Date(r.t).toLocaleString(locale === "zh" ? "zh-CN" : "en"));
     const who = el("span", "who");
     who.append(icon(r.icon || "generic"), el("span", "", r.agentName || r.agent));
     td(who, "", [r.kind, r.session && t("session {id}", { id: r.session })].filter(Boolean).join(" · "));

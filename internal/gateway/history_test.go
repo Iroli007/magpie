@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,5 +49,43 @@ func TestHistoryKeepsDaysAndDropsOld(t *testing.T) {
 	want := []string{now.AddDate(0, 0, -4).Format(dayForm), now.AddDate(0, 0, -3).Format(dayForm), yday.Format(dayForm), now.Format(dayForm)}
 	if strings.Join(left, ",") != strings.Join(want, ",") {
 		t.Fatalf("kept %v, want %v", left, want)
+	}
+}
+
+func TestHistoryRouteOutsideDayLimit(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	now := time.Now()
+	yesterday := now.AddDate(0, 0, -1)
+	for _, at := range []time.Time{yesterday, now} {
+		var data strings.Builder
+		for i := 1; i <= historyMax+1; i++ {
+			b, err := json.Marshal(Route{ID: at.UnixMilli() + int64(i), Time: at, Model: "model", Done: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			data.Write(b)
+			data.WriteByte('\n')
+		}
+		if err := os.MkdirAll(HistoryDir(), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(HistoryDir(), at.Format(dayForm)+".jsonl")
+		if err := os.WriteFile(path, []byte(data.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if at == yesterday {
+			gzipFile(path)
+		}
+		_, rows, cut := History(at.Format(dayForm))
+		if !cut || len(rows) != historyMax {
+			t.Fatalf("history: %d, cut %v", len(rows), cut)
+		}
+		id := at.UnixMilli() + 1
+		if r, ok := HistoryRoute(id); !ok || r.ID != id || r.Model != "model" {
+			t.Fatalf("route: %+v, found %v", r, ok)
+		}
+	}
+	if _, ok := HistoryRoute(42); ok {
+		t.Fatal("found missing route")
 	}
 }

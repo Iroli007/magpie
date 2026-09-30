@@ -26,16 +26,20 @@ type Row struct {
 	Swapped bool    `json:"swapped,omitempty"`
 }
 
-// Filter narrows the ledger: to one agent (its id, as AgentOf gives it),
+// Filter narrows the ledger: to a route, one agent (its id, as AgentOf gives it),
 // to the failed calls, and to the rows whose models, provider, host or
 // session hold Query (any case).
 type Filter struct {
-	Agent  string
-	Failed bool
-	Query  string
+	RouteID int64
+	Agent   string
+	Failed  bool
+	Query   string
 }
 
 func (f Filter) keeps(r Record) bool {
+	if f.RouteID != 0 && r.RouteID != f.RouteID {
+		return false
+	}
 	if f.Agent != "" && AgentOf(r.Agent) != f.Agent {
 		return false
 	}
@@ -128,7 +132,7 @@ func pricer() func(Record) *catalog.Price {
 // CSVHeader is the ledger's columns, as WriteCSV writes them.
 var CSVHeader = []string{"time", "agent", "requested_model", "provider", "host", "model", "served_model", "swapped",
 	"effort", "input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens", "reasoning_tokens",
-	"cost_usd", "duration_ms", "ttft_ms", "status", "error", "session", "kind"}
+	"cost_usd", "duration_ms", "ttft_ms", "status", "error", "session", "kind", "route_id"}
 
 // WriteCSV writes rows as CSV, a header first: times in RFC 3339 with
 // their offset, the cost in USD at the effective price (empty when unknown), error
@@ -146,9 +150,13 @@ func WriteCSV(w io.Writer, rows []Row) error {
 		if r.TTFT > 0 {
 			ttft = strconv.FormatInt(r.TTFT, 10)
 		}
+		routeID := ""
+		if r.RouteID != 0 {
+			routeID = strconv.FormatInt(r.RouteID, 10)
+		}
 		cw.Write([]string{r.Time.Format(time.RFC3339), r.Agent, r.Requested, r.Provider, r.Host, r.Model, r.Served,
 			strconv.FormatBool(r.Swapped), r.Effort, n(r.Input), n(r.Output), n(r.CacheWrite), n(r.CacheRead), n(r.Reasoning),
-			cost, strconv.FormatInt(r.Millis, 10), ttft, n(r.Status), strconv.FormatBool(r.Status >= 400), r.Session, r.Kind})
+			cost, strconv.FormatInt(r.Millis, 10), ttft, n(r.Status), strconv.FormatBool(r.Status >= 400), r.Session, r.Kind, routeID})
 	}
 	cw.Flush()
 	return cw.Error()

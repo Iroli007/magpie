@@ -453,7 +453,7 @@ func (s *Server) serveSystemOne(w http.ResponseWriter, r *http.Request) {
 		errMsg = provider.APIError(b, fmt.Sprintf("%d %s", status, http.StatusText(status)))
 	}
 	tokens := use.Usage.Input + use.Usage.Output
-	usage.Append(usage.Record{Time: start, Agent: agentOf(r), Provider: p.ID, Host: p.Where(), Model: model, Requested: asked, Served: use.Model,
+	usage.Append(usage.Record{RouteID: tr.ID, Time: start, Agent: agentOf(r), Provider: p.ID, Host: p.Where(), Model: model, Requested: asked, Served: use.Model,
 		Input: use.Usage.Input, Output: use.Usage.Output, Millis: time.Since(start).Milliseconds(), Status: status})
 	end(status, errMsg, tokens)
 	if ctype == "" || status < 300 {

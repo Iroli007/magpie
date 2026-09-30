@@ -210,3 +210,32 @@ func readDay(path string, f func([]byte)) {
 		}
 	}
 }
+
+// HistoryRoute finds a request even when it is outside History's last 2000
+// rows. Only the requested route is decoded in full; old days may be gzipped.
+func HistoryRoute(id int64) (Route, bool) {
+	history.mu.Lock()
+	defer history.mu.Unlock()
+	files := historyFiles(HistoryDir())
+	for i := len(files) - 1; i >= 0; i-- {
+		var found Route
+		readDay(files[i].path, func(line []byte) {
+			if found.ID != 0 {
+				return
+			}
+			var key struct {
+				ID int64 `json:"id"`
+			}
+			if json.Unmarshal(line, &key) == nil && key.ID == id {
+				var r Route
+				if json.Unmarshal(line, &r) == nil {
+					found = r
+				}
+			}
+		})
+		if found.ID != 0 {
+			return found, true
+		}
+	}
+	return Route{}, false
+}

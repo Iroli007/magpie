@@ -309,6 +309,12 @@ filters shown with no page and says where the file went. At the window's
 narrowest (560) the table scrolls in its box and no tab scrolls the page
 sideways; no left-border stripe; in English and Chinese, light and dark.
 
+`usage-ledger.test.cjs` also follows a request from Usage to its routing
+story and back to every usage row sharing that route ID. It checks archived
+routes with no live gateway, cleared history, rows recorded before IDs were
+kept, clearing the route filter and exporting it, in Chromium and WebKit,
+English and Chinese.
+
 `sessions-overview.test.cjs` checks the Usage page's Sessions overview: six
 figures (sessions with their median and p90, tokens, cost, cache read, active
 time, projects with the top one's share), the range as bars up to 100 days
