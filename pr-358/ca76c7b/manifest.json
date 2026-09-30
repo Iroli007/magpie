@@ -1,0 +1,41 @@
+{
+  "summary": "PR 把 DimAgent 接入 Agent 页：列表里多出一行 DimAgent（自带图标，model 与 effort 两个选择器），并新增两条中文文案——model/effort 选择器悬停提示里的「全局默认与选择优先级」说明，以及写入后状态栏里的「重启 DimAgent 加载修改」提示。",
+  "scenes": [
+    {
+      "title": "Agent 页的 DimAgent 行与选择器",
+      "shots": [
+        {
+          "file": "01-agents-dimagent-row.png",
+          "caption": "Agent 页列表：DimAgent 行及其图标、model 与 effort 两个选择器",
+          "width": 2560
+        },
+        {
+          "file": "02-agents-list-dimagent-row.png",
+          "caption": "Agent 页列表全貌：DimAgent 一行本应出现在这个列表里",
+          "width": 2560
+        }
+      ]
+    },
+    {
+      "title": "菜单栏面板里的 DimAgent 行",
+      "shots": [
+        {
+          "file": "03-panel-dimagent-row.png",
+          "caption": "菜单栏面板的 Agent 列表里的 DimAgent 行",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [
+    "Agent 页的 DimAgent 行与选择器 · hover .agent[data-id=\"dimagent\"] .field[data-key=\"model\"]: nothing visible matches .agent[data-id=\"dimagent\"] .field[data-key=\"model\"] (0 in the page)"
+  ],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙盒里 DimAgent 还没有自己的供应商、会话和已保存选择（也没有 magpie 写进去的 provider），所以选择器里看不到 DimAgent 自身的原生模型，也看不到写入成功后的中文状态栏提示和「重启 DimAgent」生效等行为；已有会话/草稿优先于全局默认这一行为只在 DimAgent 桌面里可见。",
+  "interactive": true,
+  "pages": 2
+}

@@ -1,0 +1,84 @@
+{
+  "summary": "用量页的「请求」标签新增四项汇总条、按 Token／费用／请求数与按模型／供应商／Agent 拆分的趋势图和排行、供应商筛选、可展开的请求详情（请求 ID、端点、错误类型、读自会话文件的内容），头部新增刷新周期与立即刷新；托盘面板新增「用量」标签，用同一口径显示汇总、紧凑图表和排行。",
+  "scenes": [
+    {
+      "title": "用量页「请求」的总览、图表与刷新周期",
+      "shots": [
+        {
+          "file": "01-requests-dashboard.png",
+          "caption": "请求页顶部的汇总条、趋势图与排行",
+          "width": 2560
+        },
+        {
+          "file": "02-trend-cost.png",
+          "caption": "指标为费用时的趋势图与排行",
+          "width": 2560
+        },
+        {
+          "file": "03-split-provider.png",
+          "caption": "按供应商拆分的趋势图与排行",
+          "width": 2560
+        },
+        {
+          "file": "04-chart-hover-tip.png",
+          "caption": "悬停时列上出现的明细浮层",
+          "width": 2560
+        },
+        {
+          "file": "05-rank-picked.png",
+          "caption": "从排行里选了一项之后的请求列表",
+          "width": 2560
+        },
+        {
+          "file": "06-refresh-period-menu.png",
+          "caption": "刷新周期选择展开的样子",
+          "width": 2560
+        }
+      ]
+    },
+    {
+      "title": "请求行的行内详情",
+      "shots": [
+        {
+          "file": "07-requests-table.png",
+          "caption": "请求列表的每一行",
+          "width": 2560
+        },
+        {
+          "file": "08-request-detail-open.png",
+          "caption": "展开一行后它的行内详情与内容区",
+          "width": 2560
+        }
+      ]
+    },
+    {
+      "title": "托盘面板的「用量」标签",
+      "shots": [
+        {
+          "file": "09-panel-usage.png",
+          "caption": "面板用量标签的汇总、紧凑图表与排行",
+          "width": 2560
+        },
+        {
+          "file": "10-panel-cost.png",
+          "caption": "面板图表按费用显示时的样子",
+          "width": 2560
+        },
+        {
+          "file": "11-panel-hover-tip.png",
+          "caption": "面板图表悬停时的明细浮层",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙盒里只有 DeepSeek 一个供应商、没有任何订阅账号，Agent 也是刚安装、没有本地会话文件：因此 Claude Code／Claude Desktop／Codex 会话文件产生的「本地会话」行、官方登录与订阅徽标、以及展开行后从会话文件读到的输入／输出内容都看不到；多供应商的图表配色与「按供应商筛选后再按模型拆分」也只能显示 DeepSeek 一家。",
+  "interactive": true,
+  "pages": 2
+}

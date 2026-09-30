@@ -1,0 +1,22 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>#239 界面预览 · 52e4de7</title>
+<style>:root{color-scheme:light dark;--bg:#f6f6f7;--fg:#1d1d1f;--muted:#6e6e73;--card:#fff;--line:#e5e5ea}
+@media (prefers-color-scheme:dark){:root{--bg:#111113;--fg:#f2f2f4;--muted:#9a9aa0;--card:#1c1c1f;--line:#2c2c30}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:28px 16px 60px}h1{font-size:20px;margin:0 0 4px}.m{color:var(--muted);font-size:13px;margin:0 0 20px}
+video,img{display:block;width:100%;border-radius:10px;border:1px solid var(--line);background:var(--card)}figure{margin:0 0 28px}figcaption{color:var(--muted);font-size:13px;margin-top:8px}
+a{color:inherit}</style>
+<main><h1>#239 界面预览</h1><p class="m">commit 52e4de7 · <a href="https://github.com/yetone/magpie/pull/239">回到 PR</a> · 用量页的「请求」标签新增四项汇总条、按 Token／费用／请求数与按模型／供应商／Agent 拆分的趋势图和排行、供应商筛选、可展开的请求详情（请求 ID、端点、错误类型、读自会话文件的内容），头部新增刷新周期与立即刷新；托盘面板新增「用量」标签，用同一口径显示汇总、紧凑图表和排行。</p>
+<figure><video src="preview.mp4" controls autoplay muted playsinline poster="poster.png"></video><figcaption>红线是鼠标走过的轨迹，红色圆环是一次点击；底部文字是这一步在做什么。空格暂停，← → 逐段查看。</figcaption></figure>
+<figure><img src="01-requests-dashboard.png" alt="请求页顶部的汇总条、趋势图与排行"><figcaption>用量页「请求」的总览、图表与刷新周期 · 请求页顶部的汇总条、趋势图与排行</figcaption></figure>
+<figure><img src="02-trend-cost.png" alt="指标为费用时的趋势图与排行"><figcaption>用量页「请求」的总览、图表与刷新周期 · 指标为费用时的趋势图与排行</figcaption></figure>
+<figure><img src="03-split-provider.png" alt="按供应商拆分的趋势图与排行"><figcaption>用量页「请求」的总览、图表与刷新周期 · 按供应商拆分的趋势图与排行</figcaption></figure>
+<figure><img src="04-chart-hover-tip.png" alt="悬停时列上出现的明细浮层"><figcaption>用量页「请求」的总览、图表与刷新周期 · 悬停时列上出现的明细浮层</figcaption></figure>
+<figure><img src="05-rank-picked.png" alt="从排行里选了一项之后的请求列表"><figcaption>用量页「请求」的总览、图表与刷新周期 · 从排行里选了一项之后的请求列表</figcaption></figure>
+<figure><img src="06-refresh-period-menu.png" alt="刷新周期选择展开的样子"><figcaption>用量页「请求」的总览、图表与刷新周期 · 刷新周期选择展开的样子</figcaption></figure>
+<figure><img src="07-requests-table.png" alt="请求列表的每一行"><figcaption>请求行的行内详情 · 请求列表的每一行</figcaption></figure>
+<figure><img src="08-request-detail-open.png" alt="展开一行后它的行内详情与内容区"><figcaption>请求行的行内详情 · 展开一行后它的行内详情与内容区</figcaption></figure>
+<figure><img src="09-panel-usage.png" alt="面板用量标签的汇总、紧凑图表与排行"><figcaption>托盘面板的「用量」标签 · 面板用量标签的汇总、紧凑图表与排行</figcaption></figure>
+<figure><img src="10-panel-cost.png" alt="面板图表按费用显示时的样子"><figcaption>托盘面板的「用量」标签 · 面板图表按费用显示时的样子</figcaption></figure>
+<figure><img src="11-panel-hover-tip.png" alt="面板图表悬停时的明细浮层"><figcaption>托盘面板的「用量」标签 · 面板图表悬停时的明细浮层</figcaption></figure>
+</main></html>

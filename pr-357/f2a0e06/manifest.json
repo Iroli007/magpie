@@ -1,0 +1,31 @@
+{
+  "summary": "供应商编辑器里改一个模型的推理等级会保存并整块重绘编辑器：这次改动让「名称与等级」的模型列表记住自己所属的供应商和滚动位置，重绘同一供应商时恢复原处、换供应商或重新打开时从头开始，列表不再跳回第一个模型。",
+  "scenes": [
+    {
+      "title": "供应商编辑器里的模型等级列表",
+      "shots": [
+        {
+          "file": "01-provider-names-levels.png",
+          "caption": "「名称与推理档位」里的模型列表与各自的推理档位复选框",
+          "width": 1296
+        },
+        {
+          "file": "02-levels-after-change.png",
+          "caption": "点击一个推理档位复选框之后的模型列表",
+          "width": 1296
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [
+    "供应商编辑器里的模型等级列表 · click #modal button: nothing visible matches #modal button with \"等级\" (0 in the page)"
+  ],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙盒里只有 DeepSeek 一家供应商、共 2 个模型，「名称与等级」里的模型列表放得下、不会出现自己的滚动条，所以「滚到靠下的模型、改等级后列表留在原处」这一步看不到；它需要列表溢出（PR 自带的测试用了 10 个模型）。只能展示改动发生的位置本身。",
+  "interactive": true,
+  "pages": 1
+}

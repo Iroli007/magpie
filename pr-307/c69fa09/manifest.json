@@ -1,0 +1,29 @@
+{
+  "summary": "设置页的 WebDAV 同步行在关闭时会按当前配置的 keys/agents/library 开关生成描述，并在每次重新打开设置页时重新读取磁盘上的 WebDAV 配置；默认关闭文案现在明确写出“供应商（含 API Key）”。",
+  "scenes": [
+    {
+      "title": "WebDAV 同步关闭文案",
+      "shots": [
+        {
+          "file": "01-settings-sync-row.png",
+          "caption": "设置页里 WebDAV 同步行的关闭状态描述",
+          "width": 2560
+        },
+        {
+          "file": "02-settings-sync-form.png",
+          "caption": "打开的 WebDAV 同步表单，默认开关全开",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙盒未配置 WebDAV，自动化录制也不能运行 magpie webdav 命令修改 sync.json，因此无法展示磁盘配置变化后页面重读导致的非默认开关状态。",
+  "interactive": true,
+  "pages": 1
+}

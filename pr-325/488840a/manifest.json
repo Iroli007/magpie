@@ -1,0 +1,49 @@
+{
+  "summary": "这个 diff 让 omp 的 task/smol/slow 三个角色在 Agent 页各有一个独立的方块（未设置时跟随主模型，可单独选模型），角色的思考等级会保留、重置时把用户原来的模型放回去。另外，Agent 名字下的模型列表行在模型被全部隐藏后仍保留为「显示 0 / N 个模型」，路由页多了一种「请求格式不被接受」的失败说法（请求形状厂商读不懂就转给下一家、不休息），网关在把 Codex 的 additional_tools 请求发给不认识它的厂商前会先改写。",
+  "scenes": [
+    {
+      "title": "Agent 的模型列表全部隐藏之后",
+      "shots": [
+        {
+          "file": "01-agents-model-line.png",
+          "caption": "Agent 页：Claude Code 名字下方的模型列表行",
+          "width": 2560
+        },
+        {
+          "file": "02-models-list-open.png",
+          "caption": "打开的模型列表，底部是「全部隐藏」",
+          "width": 2560
+        },
+        {
+          "file": "03-line-after-hide-all.png",
+          "caption": "「全部隐藏」之后，Agent 名字下方那一行",
+          "width": 2560
+        }
+      ]
+    },
+    {
+      "title": "路由页上一次请求的步骤",
+      "shots": [
+        {
+          "file": "04-routing-requests.png",
+          "caption": "路由页列出的最近几次请求",
+          "width": 2560
+        },
+        {
+          "file": "05-routing-steps.png",
+          "caption": "这次请求是怎么路由的：步骤与耗用",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙箱里没有 omp（Agent 页只有 Claude Code、Codex、OpenCode），所以 omp 行的 subagents/smol/slow 三个方块、未设置时显示「同主模型」的方形、以及角色处于某个思考等级时选择器里多出的「模型 · max」一项都录不到。路由页新增的「请求格式不被接受」标签与说明需要某个成员返回 422 形状错误（沙箱只有 DeepSeek 一个供应商，没有路由组，也只有成功的请求），插件登录迁移、过期提示等需要装有插件的登录账号，同样看不到。",
+  "interactive": true,
+  "pages": 2
+}

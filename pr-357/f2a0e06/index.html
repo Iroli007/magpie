@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>#357 界面预览 · f2a0e06</title>
+<style>:root{color-scheme:light dark;--bg:#f6f6f7;--fg:#1d1d1f;--muted:#6e6e73;--card:#fff;--line:#e5e5ea}
+@media (prefers-color-scheme:dark){:root{--bg:#111113;--fg:#f2f2f4;--muted:#9a9aa0;--card:#1c1c1f;--line:#2c2c30}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:28px 16px 60px}h1{font-size:20px;margin:0 0 4px}.m{color:var(--muted);font-size:13px;margin:0 0 20px}
+video,img{display:block;width:100%;border-radius:10px;border:1px solid var(--line);background:var(--card)}figure{margin:0 0 28px}figcaption{color:var(--muted);font-size:13px;margin-top:8px}
+a{color:inherit}</style>
+<main><h1>#357 界面预览</h1><p class="m">commit f2a0e06 · <a href="https://github.com/yetone/magpie/pull/357">回到 PR</a> · 供应商编辑器里改一个模型的推理等级会保存并整块重绘编辑器：这次改动让「名称与等级」的模型列表记住自己所属的供应商和滚动位置，重绘同一供应商时恢复原处、换供应商或重新打开时从头开始，列表不再跳回第一个模型。</p>
+<figure><video src="preview.mp4" controls autoplay muted playsinline poster="poster.png"></video><figcaption>红线是鼠标走过的轨迹，红色圆环是一次点击；底部文字是这一步在做什么。空格暂停，← → 逐段查看。</figcaption></figure>
+<figure><img src="01-provider-names-levels.png" alt="「名称与推理档位」里的模型列表与各自的推理档位复选框"><figcaption>供应商编辑器里的模型等级列表 · 「名称与推理档位」里的模型列表与各自的推理档位复选框</figcaption></figure>
+<figure><img src="02-levels-after-change.png" alt="点击一个推理档位复选框之后的模型列表"><figcaption>供应商编辑器里的模型等级列表 · 点击一个推理档位复选框之后的模型列表</figcaption></figure>
+</main></html>

@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>#325 界面预览 · 488840a</title>
+<style>:root{color-scheme:light dark;--bg:#f6f6f7;--fg:#1d1d1f;--muted:#6e6e73;--card:#fff;--line:#e5e5ea}
+@media (prefers-color-scheme:dark){:root{--bg:#111113;--fg:#f2f2f4;--muted:#9a9aa0;--card:#1c1c1f;--line:#2c2c30}}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:28px 16px 60px}h1{font-size:20px;margin:0 0 4px}.m{color:var(--muted);font-size:13px;margin:0 0 20px}
+video,img{display:block;width:100%;border-radius:10px;border:1px solid var(--line);background:var(--card)}figure{margin:0 0 28px}figcaption{color:var(--muted);font-size:13px;margin-top:8px}
+a{color:inherit}</style>
+<main><h1>#325 界面预览</h1><p class="m">commit 488840a · <a href="https://github.com/yetone/magpie/pull/325">回到 PR</a> · 这个 diff 让 omp 的 task/smol/slow 三个角色在 Agent 页各有一个独立的方块（未设置时跟随主模型，可单独选模型），角色的思考等级会保留、重置时把用户原来的模型放回去。另外，Agent 名字下的模型列表行在模型被全部隐藏后仍保留为「显示 0 / N 个模型」，路由页多了一种「请求格式不被接受」的失败说法（请求形状厂商读不懂就转给下一家、不休息），网关在把 Codex 的 additional_tools 请求发给不认识它的厂商前会先改写。</p>
+<figure><video src="preview.mp4" controls autoplay muted playsinline poster="poster.png"></video><figcaption>红线是鼠标走过的轨迹，红色圆环是一次点击；底部文字是这一步在做什么。空格暂停，← → 逐段查看。</figcaption></figure>
+<figure><img src="01-agents-model-line.png" alt="Agent 页：Claude Code 名字下方的模型列表行"><figcaption>Agent 的模型列表全部隐藏之后 · Agent 页：Claude Code 名字下方的模型列表行</figcaption></figure>
+<figure><img src="02-models-list-open.png" alt="打开的模型列表，底部是「全部隐藏」"><figcaption>Agent 的模型列表全部隐藏之后 · 打开的模型列表，底部是「全部隐藏」</figcaption></figure>
+<figure><img src="03-line-after-hide-all.png" alt="「全部隐藏」之后，Agent 名字下方那一行"><figcaption>Agent 的模型列表全部隐藏之后 · 「全部隐藏」之后，Agent 名字下方那一行</figcaption></figure>
+<figure><img src="04-routing-requests.png" alt="路由页列出的最近几次请求"><figcaption>路由页上一次请求的步骤 · 路由页列出的最近几次请求</figcaption></figure>
+<figure><img src="05-routing-steps.png" alt="这次请求是怎么路由的：步骤与耗用"><figcaption>路由页上一次请求的步骤 · 这次请求是怎么路由的：步骤与耗用</figcaption></figure>
+</main></html>

@@ -1,0 +1,39 @@
+{
+  "summary": "这个 PR 只改了 app.js 里推理强度的显示算法：面板滑块现在把一个「已知但不在可选档位里」的值（如 max，而模型只到 high）插在 high 之后而不是最前；Agent 列表里的四格图标与面板列表里的三格条改用同一套档位（effortStops）计算点亮格数，按滑块所在档位点亮，并且 off、none、auto、默认都不点亮，none 也不再计入档位数量。",
+  "scenes": [
+    {
+      "title": "面板里的推理强度滑块与三格条",
+      "shots": [
+        {
+          "file": "01-panel-agent-list.png",
+          "caption": "面板的 Agent 列表：每行右侧是模型名与三格推理强度条",
+          "width": 2560
+        },
+        {
+          "file": "02-panel-effort-slider-opened.png",
+          "caption": "展开后的推理强度滑块、两端标签与当前档位",
+          "width": 2560
+        }
+      ]
+    },
+    {
+      "title": "Agent 列表里的推理强度图标",
+      "shots": [
+        {
+          "file": "03-agents-effort-icons.png",
+          "caption": "Agent 列表：每行推理强度格子里的四条横杠",
+          "width": 2560
+        }
+      ]
+    }
+  ],
+  "video": "preview.mp4",
+  "poster": "poster.png",
+  "errors": [],
+  "leak": false,
+  "skipped": null,
+  "mismatch": "",
+  "unseen": "沙盒里只有新装的 Claude Code、Codex、OpenCode，三者的推理强度都是「默认」（未设置），也没有提供 none 或 auto 档位的 Agent（omp、Grok、Cline、Hermes 之类）。因此滑块把 max 排在 high 之后、以及各档位点亮几格（max 全亮、medium 亮两格、none/auto/默认不亮、Hermes 的 low 只亮一格）这些差异在这个沙盒里都看不出来：只能看到这些控件所在的位置，条数一律是 0。",
+  "interactive": true,
+  "pages": 2
+}
