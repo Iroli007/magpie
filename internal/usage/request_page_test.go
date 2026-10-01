@@ -118,11 +118,17 @@ func TestCompactPageMatchesLedger(t *testing.T) {
 	gateway := &rowChunk{}
 	for i, r := range recs {
 		gateway.add(pack(r, ""), "", int64(i), false)
+		Append(r)
 	}
 	local := &rowChunk{Source: sessions.CallSource{Path: "/session"}}
 	for _, c := range logs {
 		local.add(pack(logRecord(c), "log"), "", c.To, c.Error != "")
 	}
+	db, err := openUsageIndex("fixture", pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
 	for _, period := range []Period{Today, Week, Month, All} {
 		since := period.Since(now)
 		gs := since
@@ -137,6 +143,11 @@ func TestCompactPageMatchesLedger(t *testing.T) {
 			for _, offset := range []int{0, 7, 500, int(^uint(0) >> 1)} {
 				t.Run(fmt.Sprintf("%s/%+v/%d", period, f, offset), func(t *testing.T) {
 					equalPage(t, buildRequestPage(period, f, offset, 7, gateway, []*rowChunk{local}), pageFromLedger(period, f, offset, 7, all))
+					indexed, err := indexedRequestPage(db, period, f, offset, 7, []*rowChunk{local}, pack)
+					if err != nil {
+						t.Fatal(err)
+					}
+					equalPage(t, indexed, pageFromLedger(period, f, offset, 7, all))
 				})
 			}
 		}

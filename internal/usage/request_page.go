@@ -147,13 +147,10 @@ type pageKey struct {
 }
 type requestIndex struct {
 	sync.Mutex
-	root, meta, key                     string
-	chunks                              map[string]*rowChunk
-	gateway                             *rowChunk
-	gatewaySize, gatewayMod, gatewayOff int64
-	gatewayHash                         string
-	pages                               map[pageKey]RequestPage
-	tick                                uint64
+	root, meta, key string
+	chunks          map[string]*rowChunk
+	pages           map[pageKey]RequestPage
+	tick            uint64
 }
 
 var requestCache requestIndex
@@ -229,7 +226,6 @@ func queryPage(p Period, f Filter, offset, limit int, readSource func(sessions.C
 	if idx.root != root || idx.meta != meta {
 		idx.root, idx.meta = root, meta
 		idx.chunks = map[string]*rowChunk{}
-		idx.gateway = nil
 		idx.pages = nil
 		idx.key = ""
 	}
@@ -247,11 +243,16 @@ func queryPage(p Period, f Filter, offset, limit int, readSource func(sessions.C
 	// reading, decoding, pricing and aggregation use a private snapshot.
 	shared := idx
 	idx = &requestIndex{root: idx.root, meta: idx.meta, key: idx.key, tick: idx.tick,
-		chunks: maps.Clone(idx.chunks), gateway: idx.gateway,
-		gatewaySize: idx.gatewaySize, gatewayMod: idx.gatewayMod, gatewayOff: idx.gatewayOff, gatewayHash: idx.gatewayHash}
+		chunks: maps.Clone(idx.chunks)}
 	shared.Unlock()
 	price := pricer()
+	renamedProviders := provider.Renamed()
 	priceRow := func(r Record, source string) Row {
+		if source == "" {
+			if id, ok := renamedProviders[r.Provider]; ok {
+				r.Provider = id
+			}
+		}
 		sent := r.Model
 		if source == "" {
 			sent = provider.SentNameIn(cfg.ModelWires, r.Provider, r.Model, r.Effort)
@@ -264,8 +265,6 @@ func queryPage(p Period, f Filter, offset, limit int, readSource func(sessions.C
 		row.Agent = AgentOf(r.Agent)
 		return row
 	}
-	cachedGateway, cachedSize, cachedMod := idx.gateway, idx.gatewaySize, idx.gatewayMod
-	idx.readGateway(priceRow)
 	since := p.Since(time.Now())
 	on := map[string]bool{}
 	var chunks []*rowChunk
@@ -312,17 +311,15 @@ func queryPage(p Period, f Filter, offset, limit int, readSource func(sessions.C
 			delete(idx.chunks, path)
 		}
 	}
-	page := buildRequestPage(p, f, offset, limit, idx.gateway, chunks)
-	// Compression and decoding also stay outside the cache lock.
-	gatewaySnapshot := cachedGateway
-	if gatewaySnapshot == nil || cachedSize != idx.gatewaySize || cachedMod != idx.gatewayMod {
-		gatewaySnapshot = idx.gateway.pack()
+	db, indexErr := openUsageIndex(meta+"|"+time.Local.String(), priceRow)
+	var page RequestPage
+	if indexErr == nil {
+		page, indexErr = indexedRequestPage(db, p, f, offset, limit, chunks, priceRow)
+		db.Close()
 	}
-	if gatewaySnapshot.dict != nil {
-		next := *gatewaySnapshot
-		next.dict = nil
-		next.Bytes -= int64(32 * len(next.Strings))
-		gatewaySnapshot = &next
+	if indexErr != nil {
+		// A disposable cache must not hide the source records when unavailable.
+		page = buildRequestPage(p, f, offset, limit, gatewayRecords(priceRow), chunks)
 	}
 	shared.Lock()
 	defer shared.Unlock()
@@ -340,7 +337,6 @@ func queryPage(p Period, f Filter, offset, limit int, readSource func(sessions.C
 			delete(shared.chunks, path)
 		}
 	}
-	shared.gateway, shared.gatewaySize, shared.gatewayMod, shared.gatewayOff, shared.gatewayHash = gatewaySnapshot, idx.gatewaySize, idx.gatewayMod, idx.gatewayOff, idx.gatewayHash
 	if len(shared.pages) >= 16 {
 		shared.pages = map[pageKey]RequestPage{}
 	}
@@ -370,63 +366,25 @@ func queryPage(p Period, f Filter, offset, limit int, readSource func(sessions.C
 	return page
 }
 
-func (idx *requestIndex) readGateway(price func(Record, string) Row) {
-	idx.gateway = idx.gateway.unpack()
-	info, err := os.Stat(Path())
-	if err != nil {
-		idx.gateway = &rowChunk{}
-		idx.gatewaySize, idx.gatewayMod, idx.gatewayOff = 0, 0, 0
-		idx.gatewayHash = ""
-		return
-	}
-	if idx.gateway != nil && idx.gatewaySize == info.Size() && idx.gatewayMod == info.ModTime().UnixNano() {
-		return
-	}
-	continued := idx.gateway != nil && info.Size() > idx.gatewaySize && idx.gatewayHash != "" && recordHash(Path(), idx.gatewaySize) == idx.gatewayHash
-	if continued {
-		// Append to a copy; another period can be aggregating the published rows.
-		c := *idx.gateway
-		c.Rows, c.Strings, c.dict = slices.Clone(c.Rows), slices.Clone(c.Strings), maps.Clone(c.dict)
-		if c.dict == nil {
-			c.dict = make(map[string]uint32, len(c.Strings))
-			for i, s := range c.Strings {
-				c.dict[s] = uint32(i)
-				c.Bytes += 32
-			}
-		}
-		idx.gateway = &c
-	}
-	if !continued {
-		idx.gateway = &rowChunk{}
-		idx.gatewayOff = 0
-	}
+func gatewayRecords(price func(Record, string) Row) *rowChunk {
+	chunk := &rowChunk{}
 	file, err := os.Open(Path())
 	if err != nil {
-		return
+		return chunk
 	}
 	defer file.Close()
-	if _, err = file.Seek(idx.gatewayOff, io.SeekStart); err != nil {
-		return
-	}
-	rd := bufio.NewReader(io.LimitReader(file, info.Size()-idx.gatewayOff))
-	renamed := provider.Renamed()
+	reader := bufio.NewReader(file)
 	for {
-		b, e := rd.ReadBytes('\n')
-		if e != nil {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
 			break
 		}
-		idx.gatewayOff += int64(len(b))
-		var r Record
-		if json.Unmarshal(b, &r) != nil {
-			continue
+		var record Record
+		if json.Unmarshal(line, &record) == nil {
+			chunk.add(price(record, ""), "", int64(len(chunk.Rows)), false)
 		}
-		if id, ok := renamed[r.Provider]; ok {
-			r.Provider = id
-		}
-		idx.gateway.add(price(r, ""), "", int64(len(idx.gateway.Rows)), false)
 	}
-	idx.gatewaySize, idx.gatewayMod = info.Size(), info.ModTime().UnixNano()
-	idx.gatewayHash = recordHash(Path(), info.Size())
+	return chunk
 }
 
 // localRefs visits first occurrences of Claude message IDs. It stores only

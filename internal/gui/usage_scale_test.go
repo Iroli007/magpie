@@ -145,6 +145,13 @@ func TestUsageScale(t *testing.T) {
 		}
 	}
 
+	indexPath := filepath.Join(filepath.Dir(catalog.CachePath()), "usage-index.sqlite")
+	for _, path := range []string{usage.Path(), indexPath, indexPath + "-wal", indexPath + "-shm"} {
+		if info, err := os.Stat(path); err == nil {
+			t.Logf("gateway storage %s: %.2f MiB", filepath.Base(path), float64(info.Size())/(1<<20))
+		}
+	}
+
 	if active {
 		before := scaleShardBytes(t)
 		snapshot := scaleShardSnapshot()
