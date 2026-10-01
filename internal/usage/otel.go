@@ -195,7 +195,7 @@ func (e *otelExporter) send(config settings.OTel, signal string, payload any) {
 			}
 			retry = res.StatusCode == 429 || res.StatusCode == 502 || res.StatusCode == 503 || res.StatusCode == 504
 			if n, err := strconv.Atoi(res.Header.Get("Retry-After")); err == nil && n > 0 {
-				delay = time.Duration(n) * time.Second
+				delay = time.Duration(min(n, 60)) * time.Second
 			} else if at, err := http.ParseTime(res.Header.Get("Retry-After")); err == nil && time.Until(at) > 0 {
 				delay = time.Until(at)
 			}
@@ -206,7 +206,7 @@ func (e *otelExporter) send(config settings.OTel, signal string, payload any) {
 			}
 			return
 		}
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(min(delay, 60*time.Second))
 		select {
 		case <-e.ctx.Done():
 			timer.Stop()

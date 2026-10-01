@@ -313,6 +313,10 @@ func Restore(b Bundle, parts Parts) (Result, error) {
 		s.KeepOwn(cur)
 		if !b.Keys {
 			s.LANKey, s.LANKeyID = cur.LANKey, cur.LANKeyID
+			s.OTel.Headers = nil
+			if strings.TrimRight(strings.TrimSpace(s.OTel.Endpoint), "/") == cur.OTel.Endpoint {
+				s.OTel.Headers = cur.OTel.Headers
+			}
 		} else if b.GatewayKeys == nil {
 			// An older backup may carry a marker without its named-key store.
 			s.LANKeyID = ""

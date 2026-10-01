@@ -907,7 +907,8 @@ arguments, sessions and provider account names/keys are never exported.
 Export runs in the background with a bounded queue (128 records) and batches
 of up to 32 records, flushed every five seconds. A full queue drops telemetry
 without delaying gateway requests. Network errors and HTTP 429/502/503/504
-are retried up to two times; other errors and partial rejection are logged
+are retried up to two times, with retry delays capped at 60 seconds; other
+errors and partial rejection are logged
 without the collector's response body. Each HTTP attempt times out after
 three seconds. Graceful gateway shutdown allows at most three seconds to
 drain; `magpie serve` currently exits on SIGTERM without draining, so its last
@@ -916,6 +917,8 @@ available if it fails.
 Requests follow magpie's proxy setting, with loopback collectors going direct.
 Queued records are discarded if export is disabled or the destination or
 credentials change before sending. Redirects are not followed.
+Backups without keys omit OTLP headers; restoring one preserves this machine's
+headers only when the collector endpoint is unchanged.
 
 ## Files
 

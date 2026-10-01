@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/yetone/magpie/internal/settings"
@@ -254,5 +255,54 @@ func TestOTelShutdownCancelsSlowCollector(t *testing.T) {
 	stop()
 	if time.Since(start) > 4*time.Second {
 		t.Fatal("shutdown did not cancel slow export")
+	}
+}
+
+type otelTestTransport func(*http.Request) (*http.Response, error)
+
+func (f otelTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestOTelRetryAfterBound(t *testing.T) {
+	for _, value := range []string{"86400", "9223372036854775807", "date", "30"} {
+		t.Run(value, func(t *testing.T) {
+			otelConfig(t, settings.OTel{Endpoint: "https://collector.test"})
+			synctest.Test(t, func(t *testing.T) {
+				e := newOTelExporter()
+				defer e.cancel()
+				start := time.Now()
+				calls := 0
+				want := 60 * time.Second
+				if value == "30" {
+					want = 30 * time.Second
+				}
+				e.client.Transport = otelTestTransport(func(r *http.Request) (*http.Response, error) {
+					calls++
+					status := http.StatusServiceUnavailable
+					h := http.Header{}
+					retryAfter := value
+					if value == "date" {
+						retryAfter = start.Add(24 * time.Hour).UTC().Format(http.TimeFormat)
+					}
+					h.Set("Retry-After", retryAfter)
+					if calls == 3 {
+						status = http.StatusOK
+					}
+					if elapsed := time.Since(start); elapsed != time.Duration(calls-1)*want {
+						t.Errorf("attempt %d after %v, want %v", calls, elapsed, time.Duration(calls-1)*want)
+					}
+					return &http.Response{StatusCode: status, Header: h, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+				})
+				cfg, err := settings.OTelExport()
+				if err != nil {
+					t.Fatal(err)
+				}
+				e.send(cfg, "traces", e.traces([]Record{{Time: start, Status: 200}}))
+				if calls != 3 {
+					t.Fatalf("attempts=%d, want 3", calls)
+				}
+			})
+		})
 	}
 }

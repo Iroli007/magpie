@@ -32,6 +32,47 @@ func TestOTelSettingsFilePermissions(t *testing.T) {
 	}
 }
 
+func TestOTelSettingsPreservesReadOnlyPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits")
+	}
+	for _, mode := range []os.FileMode{0o400, 0o444} {
+		t.Run(mode.String(), func(t *testing.T) {
+			t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+			if err := Save(Settings{OTel: OTel{Headers: map[string]string{"Authorization": "Basic original"}}}); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(Path(), mode); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(Path(), 0o600) })
+			f, err := os.OpenFile(Path(), os.O_WRONLY, 0)
+			writable := err == nil
+			if writable {
+				f.Close()
+			}
+			err = Save(Settings{OTel: OTel{Headers: map[string]string{"Authorization": "Basic changed"}}})
+			if !writable {
+				if !os.IsPermission(err) {
+					t.Fatalf("save to read-only settings: %v", err)
+				}
+				after, err := os.ReadFile(Path())
+				if err != nil || string(after) != string(before) {
+					t.Fatalf("read-only settings changed: %v", err)
+				}
+			}
+			info, err := os.Stat(Path())
+			if err != nil || info.Mode().Perm() != 0o400 {
+				t.Fatalf("owner read-only permissions changed: %v, %v", info, err)
+			}
+		})
+	}
+}
+
 func TestOTelSettingsAndOverrides(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	for _, k := range []string{"MAGPIE_OTEL_ENABLED", "MAGPIE_OTEL_ENDPOINT", "MAGPIE_OTEL_HEADERS", "MAGPIE_OTEL_METRICS"} {
