@@ -376,7 +376,7 @@ func groupEntries(entries []Entry) []Entry {
 		if len(ms) == 0 {
 			continue
 		}
-		e := Entry{ID: GroupPrefix + g.ID, Model: ms[0].Model, Name: g.Name, Provider: ms[0].Provider, Group: g.ID, Images: true}
+		e := Entry{ID: GroupPrefix + g.ID, Model: ms[0].Model, Name: g.Name, Provider: ms[0].Provider, Group: g.ID, Images: true, Reasoning: true}
 		var fixed []string // the efforts members are fixed at
 		levelled := false  // a member that follows the agent's effort was met
 		// Codex's ultra (max, with Codex handing parts of the task to agents
@@ -390,9 +390,11 @@ func groupEntries(entries []Entry) []Entry {
 			}
 			var efforts []string
 			images, ctx, output := false, 0, 0
+			reasoning := false
 			var imageInput *bool
 			for _, x := range entries {
 				if x.Provider.ID == m.Provider.ID && x.Model == m.Model {
+					reasoning = x.Reasoning || len(x.Efforts) > 0
 					efforts, images, ctx, output, imageInput = x.Efforts, x.Images, x.Context, x.Output, x.ImageInput
 				}
 			}
@@ -400,6 +402,7 @@ func groupEntries(entries []Entry) []Entry {
 				e.Output = output
 			}
 			e.Images = e.Images && images
+			e.Reasoning = e.Reasoning && reasoning
 			if ctx > 0 && (e.Context == 0 || ctx < e.Context) {
 				e.Context = ctx
 			}

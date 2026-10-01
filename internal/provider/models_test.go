@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/settings"
 )
 
 func TestExplicitTextOnlyBeatsCrossProviderImageGuess(t *testing.T) {
@@ -239,5 +240,27 @@ func TestFetchPlanWithoutList(t *testing.T) {
 	ms, err := p.Fetch(context.Background())
 	if err != nil || len(ms) != len(wbModels) {
 		t.Errorf("%d models, %v", len(ms), err)
+	}
+}
+
+func TestEntryReasoningWithoutLevels(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(catalog.CachePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalog.CachePath(), []byte(`{"xiaomi":{"models":{"mimo-v2.6-flash":{"id":"mimo-v2.6-flash","reasoning":true}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog.Reset()
+	t.Cleanup(catalog.Reset)
+	p := Provider{ID: "relay"}
+	for _, m := range []catalog.Model{
+		{ID: "xiaomi/mimo-v2.6-flash"},
+		{ID: "remote", Reasoning: true},
+	} {
+		e := entryFor(p, m, settings.Settings{})
+		if !e.Reasoning || len(e.Efforts) != 0 {
+			t.Errorf("entry: %+v", e)
+		}
 	}
 }

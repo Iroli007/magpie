@@ -27,6 +27,7 @@ type Model struct {
 	Provider    string // models.dev provider id
 	Released    string // YYYY-MM-DD, used for ordering
 	Efforts     []string
+	Reasoning   bool   `json:",omitempty"`
 	Temperature *bool  // false when the model refuses temperature/top_p
 	Price       *Price // USD per million tokens, when models.dev lists it
 	// Keys, for a vendor whose keys each see models of their own, are the
@@ -94,6 +95,7 @@ type mdModel struct {
 	Name        string `json:"name"`
 	ReleaseDate string `json:"release_date"`
 	Temperature *bool  `json:"temperature"` // false: rejects temperature/top_p
+	CanReason   bool   `json:"reasoning"`
 	Reasoning   []struct {
 		Type   string   `json:"type"`
 		Values []string `json:"values"`
@@ -145,7 +147,8 @@ var (
 	mdev   map[string]mdProvider
 	// images are the models, by bare id, most of the providers serving
 	// them say take images (a few mislabel a text model)
-	images map[string]bool
+	images    map[string]bool
+	reasoning map[string]bool
 	// windows are the models' context windows, by bare id, as most of the
 	// providers serving them give it
 	windows map[string]int
@@ -196,6 +199,7 @@ func load() map[string]mdProvider {
 				var m map[string]mdProvider
 				if json.Unmarshal(b, &m) == nil && len(m) > 0 {
 					mdev = m
+					reasoning = map[string]bool{}
 					votes := map[string]int{}
 					sizes, outs := map[string]map[int]int{}, map[string]map[int]int{}
 					levels := map[string]map[string]int{}
@@ -206,6 +210,9 @@ func load() map[string]mdProvider {
 					voted := map[string]bool{}
 					for pid, p := range m {
 						for id, x := range p.Models {
+							if x.CanReason || len(x.Reasoning) > 0 {
+								reasoning[bareID(id)] = true
+							}
 							if e := x.efforts(); len(e) > 0 {
 								l := strings.Join(e, ",")
 								if levels[bareID(id)] == nil {
@@ -413,6 +420,7 @@ func Provider(id string) []Model {
 		mm := Model{ID: m.ID, Name: m.Name, Provider: id, Released: m.ReleaseDate, Price: m.Cost, Temperature: m.Temperature,
 			Images: slices.Contains(m.Modalities.Input, "image"), ImageInput: imageInput(m.Modalities.Input), Context: m.window(), Output: m.Limit.Output}
 		mm.Efforts = m.efforts()
+		mm.Reasoning = m.CanReason || len(m.Reasoning) > 0
 		out = append(out, mm)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -437,6 +445,13 @@ func ProviderName(id string) string {
 func SeesImages(id string) bool {
 	load()
 	return images[bareID(id)]
+}
+
+// CanReason reports reasoning capability, including models with a thinking
+// switch or budget but no effort levels.
+func CanReason(id string) bool {
+	load()
+	return reasoning[bareID(id)]
 }
 
 // ContextOf is the context window models.dev gives a model of this id, as

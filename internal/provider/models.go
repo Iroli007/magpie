@@ -697,6 +697,7 @@ type Entry struct {
 	Name       string   `json:"name"`              // the user's name for it, when they gave one (SetModelName)
 	Default    string   `json:"default,omitempty"` // the model's own name, when the user gave it another
 	Efforts    []string `json:"efforts,omitempty"`
+	Reasoning  bool     `json:"reasoning,omitempty"`
 	Provider   Provider `json:"-"`                // a group's: its first member's
 	Group      string   `json:"group,omitempty"`  // set on a routing group (group.go)
 	Icons      []string `json:"-"`                // a group's: its providers' icons, one per provider
@@ -781,6 +782,10 @@ func entryFor(p Provider, m catalog.Model, s settings.Settings) Entry {
 		Images: images, ImageInput: imageInput, Context: ctx, Output: output, Free: m.Free}
 	if n, ok := modelNameIn(s.ModelNames, p.ID, m.ID); ok {
 		e.Name, e.Default = n, m.Name
+	}
+	e.Reasoning = m.Reasoning || len(e.Efforts) > 0
+	if m.Provider == "" {
+		e.Reasoning = e.Reasoning || catalog.CanReason(m.ID)
 	}
 	e.Efforts = effortsKept(e.Efforts, s.ModelEfforts[e.ID])
 	return e

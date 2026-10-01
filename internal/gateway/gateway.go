@@ -410,7 +410,7 @@ func modelObject(e provider.Entry) map[string]any {
 		levels = append(levels, reasoningLevel{Effort: effort})
 	}
 	m := map[string]any{"id": e.ID, "object": "model", "type": "model", "created": 0, "created_at": "2025-01-01T00:00:00Z",
-		"owned_by": e.Provider.ID, "display_name": e.Name, "reasoning": len(levels) > 0, "supported_reasoning_levels": levels}
+		"owned_by": e.Provider.ID, "display_name": e.Name, "reasoning": e.Reasoning || len(levels) > 0, "supported_reasoning_levels": levels}
 	// the window, as the names clients read it by: a group's context
 	// (magpie group set … context=) included
 	if e.Context > 0 {

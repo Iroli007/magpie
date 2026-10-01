@@ -709,10 +709,14 @@ func TestModelsListReasoning(t *testing.T) {
 	data := `{"a":{"models":{
 		"sol":{"id":"sol","reasoning_options":[{"type":"effort","values":["low","medium","high","max"]}]},
 		"mixed":{"id":"mixed","reasoning_options":[{"type":"effort","values":["low","high"]}]},
+		"mimo-v2.6-flash":{"id":"mimo-v2.6-flash","reasoning":true,"reasoning_options":[{"type":"toggle"}]},
+		"disjoint":{"id":"disjoint","reasoning_options":[{"type":"effort","values":["low"]}]},
 		"plain":{"id":"plain"}}},
 		"b":{"models":{
 		"sol":{"id":"sol","reasoning_options":[{"type":"effort","values":["medium","high"]}]},
-		"mixed":{"id":"mixed"}}}}`
+		"mixed":{"id":"mixed"},
+		"mimo-v2.6-flash":{"id":"mimo-v2.6-flash","reasoning":true},
+		"disjoint":{"id":"disjoint","reasoning_options":[{"type":"effort","values":["high"]}]}}}}`
 	if err := os.WriteFile(catalog.CachePath(), []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -743,6 +747,8 @@ func TestModelsListReasoning(t *testing.T) {
 	want := map[string]string{
 		"a/sol": "low,medium,high,max", "b/sol": "medium,high", "group/auto-sol": "medium,high",
 		"a/mixed": "low,high", "b/mixed": "", "group/auto-mixed": "", "a/plain": "",
+		"a/mimo-v2.6-flash": "", "b/mimo-v2.6-flash": "", "group/auto-mimo-v2-6-flash": "",
+		"a/disjoint": "low", "b/disjoint": "high", "group/auto-disjoint": "",
 	}
 	for _, m := range response.Data {
 		expected, ok := want[m.ID]
@@ -754,7 +760,8 @@ func TestModelsListReasoning(t *testing.T) {
 		for _, level := range m.Levels {
 			levels = append(levels, level.Effort)
 		}
-		if m.Reasoning == nil || *m.Reasoning != (expected != "") || strings.Join(levels, ",") != expected {
+		reasoning := expected != "" || strings.HasSuffix(m.ID, "/mimo-v2.6-flash") || m.ID == "group/auto-mimo-v2-6-flash" || m.ID == "group/auto-disjoint"
+		if m.Reasoning == nil || *m.Reasoning != reasoning || strings.Join(levels, ",") != expected {
 			t.Errorf("%s: reasoning %v, levels %v; want %q", m.ID, m.Reasoning, levels, expected)
 		}
 	}

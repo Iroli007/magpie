@@ -288,6 +288,7 @@ func fetchOne(ctx context.Context, url, key string, anthropic bool, headers map[
 		if n, ok := r.Output.(float64); ok && n > 0 {
 			m.Output = int(n)
 		}
+		m.Reasoning, _ = r.Reasoning.(bool)
 		m.Efforts = levelsOf(r.Levels)
 		if input != nil {
 			m.Images = *input
@@ -343,9 +344,10 @@ type liveModel struct {
 	// than translated (native_endpoints), its longest reply and its
 	// reasoning levels. any, as a vendor's odd value mustn't lose the
 	// whole list
-	Native []string `json:"native_endpoints"`
-	Output any      `json:"max_output_tokens"`
-	Levels any      `json:"supported_reasoning_levels"`
+	Native    []string `json:"native_endpoints"`
+	Output    any      `json:"max_output_tokens"`
+	Levels    any      `json:"supported_reasoning_levels"`
+	Reasoning any      `json:"reasoning"`
 	// another magpie's name for the model with its provider there after
 	// it, and "image" on one it draws with
 	Label string `json:"magpie_label"`
@@ -409,6 +411,7 @@ func Decorate(live []Model, known []Model) []Model {
 				m.Name = k.Name
 			}
 			m.Efforts, m.Released, m.Provider = k.Efforts, k.Released, k.Provider
+			m.Reasoning = m.Reasoning || k.Reasoning
 			if m.ImageInput == nil {
 				m.ImageInput = k.ImageInput
 				m.Images = m.Images || k.Images

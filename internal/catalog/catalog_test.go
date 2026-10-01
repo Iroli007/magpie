@@ -259,3 +259,24 @@ func TestFetchedImageCapabilityOverridesCatalog(t *testing.T) {
 		t.Fatalf("source precedence: %+v", got)
 	}
 }
+
+func TestReasoningWithoutEffortLevels(t *testing.T) {
+	writeCatalog(t, `{"xiaomi":{"models":{
+		"mimo-v2.6-flash":{"id":"mimo-v2.6-flash","reasoning":true},
+		"toggle":{"id":"toggle","reasoning_options":[{"type":"toggle"}]},
+		"budget":{"id":"budget","reasoning_options":[{"type":"budget_tokens"}]},
+		"plain":{"id":"plain","reasoning":false}}}}`)
+	for _, m := range Provider("xiaomi") {
+		want := m.ID != "plain"
+		if m.Reasoning != want || len(m.Efforts) != 0 {
+			t.Errorf("catalog model: %+v", m)
+		}
+		if got := CanReason("xiaomi/" + m.ID); got != want {
+			t.Errorf("%s: CanReason = %v, want %v", m.ID, got, want)
+		}
+	}
+	live := Decorate([]Model{{ID: "mimo-v2.6-flash"}, {ID: "plain"}}, Provider("xiaomi"))
+	if !live[0].Reasoning || len(live[0].Efforts) != 0 || live[1].Reasoning {
+		t.Fatalf("decorated: %+v", live)
+	}
+}

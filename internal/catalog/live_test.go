@@ -54,9 +54,9 @@ func TestFetchMagpieFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		rw.Write([]byte(`{"object":"list","data":[
 		  {"id":"anthropic/claude-opus-4-8","native_endpoints":["/v1/messages"],"max_output_tokens":128000,"supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]},
-		  {"id":"group/fast","supported_reasoning_levels":[]},
+		  {"id":"group/fast","reasoning":true,"supported_reasoning_levels":[]},
 		  {"id":"codex/gpt-6","supported_endpoints":["/responses","/chat/completions"],"supported_reasoning_levels":["low","medium"]},
-		  {"id":"odd","max_output_tokens":"lots","supported_reasoning_levels":{"low":true}}]}`))
+		  {"id":"odd","reasoning":"unknown","max_output_tokens":"lots","supported_reasoning_levels":{"low":true}}]}`))
 	}))
 	defer srv.Close()
 	ms, _, err := FetchAt(context.Background(), srv.URL+"/v1", "k", false, nil)
@@ -66,6 +66,9 @@ func TestFetchMagpieFields(t *testing.T) {
 	got := map[string]string{}
 	for _, m := range ms {
 		got[m.ID] = fmt.Sprint(m.APIs, m.Output, m.Efforts)
+		if m.Reasoning != (m.ID == "group/fast") {
+			t.Errorf("%s: reasoning %v", m.ID, m.Reasoning)
+		}
 	}
 	want := map[string]string{
 		"anthropic/claude-opus-4-8": "[anthropic] 128000 [low high]",
