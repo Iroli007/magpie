@@ -1,10 +1,36 @@
 package settings
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
+
+func TestOTelSettingsFilePermissions(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
+	for _, existing := range []bool{false, true} {
+		if existing {
+			if err := os.Chmod(Path(), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := Save(Settings{OTel: OTel{Headers: map[string]string{"Authorization": "Basic test-secret"}}}); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+			t.Fatalf("existing=%v: settings mode %o, want 600", existing, info.Mode().Perm())
+		}
+		if Load().OTel.Headers["Authorization"] != "Basic test-secret" {
+			t.Fatal("credentials did not persist")
+		}
+	}
+}
 
 func TestOTelSettingsAndOverrides(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))

@@ -150,6 +150,44 @@ func TestNoKeys(t *testing.T) {
 	}
 }
 
+func TestOTelBackupHeaders(t *testing.T) {
+	home(t)
+	config := settings.OTel{Enabled: true, Metrics: true, Endpoint: "https://collector.example.com", Headers: map[string]string{"Authorization": "Basic test-secret", "X-Custom": "custom-secret"}}
+	if err := settings.Save(settings.Settings{OTel: config}); err != nil {
+		t.Fatal(err)
+	}
+	for _, keys := range []bool{false, true} {
+		b, err := Collect(keys, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := Seal(b, "pw")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := Open(data, "pw")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Settings == nil {
+			t.Fatal("settings missing from backup")
+		}
+		o := got.Settings.OTel
+		if o.Enabled != config.Enabled || o.Metrics != config.Metrics || o.Endpoint != config.Endpoint {
+			t.Fatalf("non-secret OTLP preferences changed: %+v", o)
+		}
+		if !keys && len(o.Headers) != 0 {
+			t.Fatalf("OTLP headers in keyless backup: %+v", o.Headers)
+		}
+		if keys && (len(o.Headers) != 2 || o.Headers["Authorization"] != config.Headers["Authorization"] || o.Headers["X-Custom"] != config.Headers["X-Custom"]) {
+			t.Fatal("full backup lost OTLP headers")
+		}
+	}
+	if got := settings.Load().OTel.Headers; got["Authorization"] != config.Headers["Authorization"] || got["X-Custom"] != config.Headers["X-Custom"] {
+		t.Fatal("keyless backup changed saved credentials")
+	}
+}
+
 // The library goes too: its sets, servers and skills' files; without keys
 // a server's secret-looking values stay behind, and the ones on the
 // machine restored to stay. A backup from before the library leaves it.

@@ -132,6 +132,7 @@ func Collect(keys bool, app string) (Bundle, error) {
 		s := settings.Load()
 		if !keys {
 			s.LANKey, s.LANKeyID = "", ""
+			s.OTel.Headers = nil
 		}
 		b.Settings = &s
 	}

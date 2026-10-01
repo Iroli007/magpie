@@ -909,8 +909,10 @@ of up to 32 records, flushed every five seconds. A full queue drops telemetry
 without delaying gateway requests. Network errors and HTTP 429/502/503/504
 are retried up to two times; other errors and partial rejection are logged
 without the collector's response body. Each HTTP attempt times out after
-three seconds, and shutdown allows at most three seconds to drain. This is
-best-effort export; local usage records remain available if it fails.
+three seconds. Graceful gateway shutdown allows at most three seconds to
+drain; `magpie serve` currently exits on SIGTERM without draining, so its last
+batch may be lost. This is best-effort export; local usage records remain
+available if it fails.
 Requests follow magpie's proxy setting, with loopback collectors going direct.
 Queued records are discarded if export is disabled or the destination or
 credentials change before sending. Redirects are not followed.

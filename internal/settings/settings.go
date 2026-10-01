@@ -586,7 +586,12 @@ func Save(s Settings) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(Path(), append(b, '\n'), 0o644)
+	// WriteFile's mode only applies to new files; restrict existing settings
+	// before writing credentials into them as well.
+	if err := os.Chmod(Path(), 0o600); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(Path(), append(b, '\n'), 0o600)
 }
 
 func (s Settings) normal() Settings {
