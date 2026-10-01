@@ -2,10 +2,13 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yetone/magpie/internal/provider"
 )
 
 // fakeWarmClaude is a claude that writes what it was run with to log and
@@ -65,5 +68,48 @@ func TestWarmClaudeSaysWhyNot(t *testing.T) {
 	fakeWarmClaude(t, `not json`, 2)
 	if err := warmClaude(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "not json") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// A Claude account's model test runs Claude Code at the model tested.
+func TestClaudeTestRunsClaudeCode(t *testing.T) {
+	log := fakeWarmClaude(t, `{"type":"result","is_error":false,"result":"Hi!"}`, 0)
+	p := provider.Provider{Name: "Claude", Account: &provider.Account{Agent: "claude"}}
+	r := p.TestModels(context.Background(), []string{"claude-sonnet-4-5"})
+	if len(r) != 1 || !r[0].OK || r[0].Model != "claude-sonnet-4-5" {
+		t.Fatalf("result %+v", r)
+	}
+	b, _ := os.ReadFile(log)
+	if got := string(b); !strings.Contains(got, "[--model][claude-sonnet-4-5]") || !strings.Contains(got, "stdin:hi") {
+		t.Fatalf("run:\n%s", got)
+	}
+}
+
+// Claude's usage is Claude Code's own /usage, run with nothing of the
+// user's settings and nothing kept, as the account it is signed in to.
+func TestClaudeUsageRunsClaudeCode(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "log")
+	out := filepath.Join(dir, "out")
+	text := "You are currently using your subscription\n\nCurrent session: 13% used · resets Oct 1 at 3:30pm (Asia/Shanghai)\n"
+	b, _ := json.Marshal(map[string]any{"type": "result", "is_error": false, "num_turns": 0, "result": text})
+	os.WriteFile(out, b, 0o644)
+	script := "#!/bin/sh\n" +
+		"{ printf 'args:'; for a in \"$@\"; do printf '[%s]' \"$a\"; done; echo; echo \"token:$CLAUDE_CODE_OAUTH_TOKEN\"; } > " + log + "\n" +
+		"cat " + out + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "leaked")
+	got, err := claudeUsage(context.Background())
+	if err != nil || got != text {
+		t.Fatalf("usage %q %v", got, err)
+	}
+	b, _ = os.ReadFile(log)
+	for _, want := range []string{"[-p][/usage]", "[--setting-sources][]", "[--strict-mcp-config]", "[--no-session-persistence]", "token:\n"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("run lacks %q:\n%s", want, b)
+		}
 	}
 }

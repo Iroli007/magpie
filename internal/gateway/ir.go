@@ -80,6 +80,7 @@ type Tool struct {
 	Name        string
 	Description string
 	Schema      json.RawMessage // JSON schema of the arguments
+	Strict      bool            // the client asked for its arguments held to the schema
 }
 
 // Request is a call to a model, whichever API it arrived in.
@@ -111,6 +112,18 @@ type Request struct {
 	// for (Codex's reasoning.encrypted_content), which a Responses upstream
 	// is asked for too: a relay may refuse a request without it (#315).
 	Include []string
+	// ClientMetadata and Text are a Responses client's client_metadata
+	// (Codex's installation and session ids, which a relay may check, #374)
+	// and text (its verbosity, and the schema an answer must fit), which go
+	// on as they were sent when the request is built again for a Responses
+	// upstream; no other API takes them.
+	ClientMetadata json.RawMessage
+	Text           json.RawMessage
+	// Metadata is an Anthropic client's metadata (Claude Code's user_id),
+	// which goes on as it was sent when the request is built again for an
+	// Anthropic upstream: a relay that serves only Claude Code turns a
+	// request without it away (#359).
+	Metadata json.RawMessage
 	// GeminiCompat is the upstream being Gemini's OpenAI-compatible API
 	// (AI Studio's, or a proxy in front of it on this machine or the LAN),
 	// which gives the model's thoughts only when asked in thinking_config.
@@ -157,6 +170,9 @@ type Event struct {
 	Stop   string // stop | length | tool | filter
 	Usage  Usage
 	Hits   []Hit
+	// Code: for KError, the vendor's code when it is its safety filter
+	// refusing (bio_policy, content_filter…), kept in translation (#248)
+	Code string
 }
 
 // Usage counts tokens.

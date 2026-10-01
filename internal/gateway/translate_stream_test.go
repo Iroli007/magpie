@@ -251,3 +251,138 @@ func TestStreamedCallStopsForTool(t *testing.T) {
 		t.Fatalf("stop %q", stop)
 	}
 }
+
+// A relay can repeat a tool call's id on every fragment of it, where the
+// spec sends the id only on the first. Each such fragment must continue
+// the call already open: only a new id, a new name or a new index starts
+// the next one. Read as a fresh call every time, one tool call came out as
+// several, each holding a piece of the arguments.
+func TestChatTranslationToolCallIDRepeated(t *testing.T) {
+	var d chatDecoder
+	var got []Event
+	for _, chunk := range []string{
+		`{"id":"x","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}`,
+		`{"id":"x","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"arguments":"{\"ci"}}]}}]}`,
+		`{"id":"x","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"arguments":"ty\":\"SF\"}"}}]}}]}`,
+		`{"id":"x","choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+	} {
+		if err := d.decode(chunk, func(ev Event) { got = append(got, ev) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var starts []Event
+	var args, stop string
+	for _, ev := range got {
+		switch ev.Kind {
+		case KToolStart:
+			starts = append(starts, ev)
+		case KToolArgs:
+			args += ev.Text
+		case KStop:
+			stop = ev.Stop
+		}
+	}
+	if len(starts) != 1 {
+		t.Fatalf("a repeated id started %d calls, want 1: %+v", len(starts), starts)
+	}
+	if starts[0].ID != "call_1" || starts[0].Name != "get_weather" {
+		t.Fatalf("call = %q %q", starts[0].ID, starts[0].Name)
+	}
+	if args != `{"city":"SF"}` {
+		t.Fatalf("arguments = %q", args)
+	}
+	if stop != "tool" {
+		t.Fatalf("stop = %q, want tool", stop)
+	}
+}
+
+// chatToAnthropic runs Chat Completions stream chunks through the decoder
+// and the Anthropic encoder, giving back what an Anthropic client — Claude
+// Code among them — is answered for a relay that only speaks Chat.
+func chatToAnthropic(t *testing.T, chunks ...string) []map[string]any {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	enc := &anthropicEncoder{w: newSSEWriter(rec), model: "m"}
+	var d chatDecoder
+	for _, c := range chunks {
+		if err := d.decode(c, enc.event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enc.finish()
+	var out []map[string]any
+	sc := bufio.NewScanner(strings.NewReader(rec.Body.String()))
+	for sc.Scan() {
+		if data, ok := strings.CutPrefix(sc.Text(), "data: "); ok {
+			var m map[string]any
+			if json.Unmarshal([]byte(data), &m) == nil {
+				out = append(out, m)
+			}
+		}
+	}
+	return out
+}
+
+// The same repeated id, seen by an Anthropic client: one content block
+// holding the whole call, not one block per fragment with the arguments
+// split between them, none of them valid JSON.
+func TestRepeatedToolCallIDOpensOneBlock(t *testing.T) {
+	out := chatToAnthropic(t,
+		`{"id":"x","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}`,
+		`{"id":"x","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"arguments":"{\"city\":"}}]}}]}`,
+		`{"id":"x","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"arguments":"\"SF\"}"}}]}}]}`,
+		`{"id":"x","choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+	)
+	var blocks []map[string]any
+	var input string
+	for _, ev := range out {
+		switch ev["type"] {
+		case "content_block_start":
+			if b, ok := ev["content_block"].(map[string]any); ok && b["type"] == "tool_use" {
+				blocks = append(blocks, b)
+			}
+		case "content_block_delta":
+			if d, ok := ev["delta"].(map[string]any); ok && d["type"] == "input_json_delta" {
+				input += d["partial_json"].(string)
+			}
+		}
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("%d tool_use blocks, want 1: %+v", len(blocks), blocks)
+	}
+	if blocks[0]["id"] != "call_1" || blocks[0]["name"] != "get_weather" {
+		t.Fatalf("block = %v", blocks[0])
+	}
+	var args map[string]any
+	if json.Unmarshal([]byte(input), &args) != nil {
+		t.Fatalf("arguments %q are not one whole JSON object", input)
+	}
+	if args["city"] != "SF" {
+		t.Fatalf("arguments = %v", args)
+	}
+}
+
+// Two calls in one reply are still two, whatever a relay repeats: the
+// second index opens the second call, and its own fragments continue it.
+func TestRepeatedToolCallIDKeepsParallelCalls(t *testing.T) {
+	out := chatToResponses(t,
+		`{"id":"x","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"one","arguments":""}}]}}]}`,
+		`{"id":"x","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"arguments":"{\"n\":1}"}}]}}]}`,
+		`{"id":"x","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"two","arguments":"{\"n\":2}"}}]}}]}`,
+		`{"id":"x","choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+	)
+	var calls []string
+	for _, ev := range out {
+		if ev["type"] != "response.output_item.done" {
+			continue
+		}
+		item, _ := ev["item"].(map[string]any)
+		if item["type"] != "function_call" {
+			continue
+		}
+		calls = append(calls, item["call_id"].(string)+"="+item["arguments"].(string))
+	}
+	if strings.Join(calls, " ") != `call_a={"n":1} call_b={"n":2}` {
+		t.Fatalf("calls = %v", calls)
+	}
+}

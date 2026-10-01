@@ -16,13 +16,27 @@ import (
 )
 
 // DeviceToken is the dt- device token a finished device flow returns.
-var openAPIHost = OpenAPIHost
-
 type DeviceToken struct {
 	Token        string `json:"token"`
 	DeviceToken  string `json:"device_token,omitempty"`
 	RefreshToken string `json:"refresh_token"`
 	UserID       string `json:"user_id"`
+	UserName     string `json:"user_name,omitempty"`
+	// ExpiresIn (seconds) or ExpiresAt (a date) is the token's lifetime, as
+	// Qoder's CLI reads it; either may be missing.
+	ExpiresIn int64  `json:"expires_in,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+// Expiry is when the device token lapses; zero when Qoder said nothing.
+func (t DeviceToken) Expiry() time.Time {
+	if at, err := time.Parse(time.RFC3339, strings.TrimSpace(t.ExpiresAt)); err == nil {
+		return at
+	}
+	if t.ExpiresIn > 0 {
+		return time.Now().Add(time.Duration(t.ExpiresIn) * time.Second)
+	}
+	return time.Time{}
 }
 
 // JobToken is the jt- task token that authorizes the model calls.
@@ -47,17 +61,24 @@ func (r JobToken) Expiry() time.Duration {
 // the waiting, and calls these one at a time.
 type DeviceFlow struct {
 	client    *http.Client
-	clientID  string
+	site      *Site
 	machineID string
 }
 
-// NewDeviceFlow makes a flow; a nil client is a 20-second-timeout one.
-func NewDeviceFlow(client *http.Client) *DeviceFlow {
+// NewDeviceFlow makes a flow on site (nil is the global one); a nil client is
+// a 20-second-timeout one.
+func NewDeviceFlow(client *http.Client, site *Site) *DeviceFlow {
 	if client == nil {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
-	return &DeviceFlow{client: client, clientID: ClientID, machineID: newUUID()}
+	if site == nil {
+		site = Global
+	}
+	return &DeviceFlow{client: client, site: site, machineID: newUUID()}
 }
+
+// Site is the Qoder site the flow signs in on.
+func (f *DeviceFlow) Site() *Site { return f.site }
 
 // Client is the flow's HTTP client, reused for the model fetch after sign-in.
 func (f *DeviceFlow) Client() *http.Client { return f.client }
@@ -81,9 +102,11 @@ func (f *DeviceFlow) Authorization() (authURL, verifier, nonce string, err error
 	q.Set("challenge_method", "S256")
 	q.Set("nonce", nonce)
 	q.Set("machine_id", f.machineID)
-	q.Set("client_id", f.clientID)
-	q.Set("redirect_uri", RedirectURI)
-	return DeviceFlowHost + DeviceSelectAccountsPath + "?" + q.Encode(), verifier, nonce, nil
+	q.Set("client_id", f.site.ClientID)
+	if f.site.RedirectURI != "" {
+		q.Set("redirect_uri", f.site.RedirectURI)
+	}
+	return f.site.Web + DeviceSelectAccountsPath + "?" + q.Encode(), verifier, nonce, nil
 }
 
 // PollDeviceToken asks for the device token until the user has authorized it,
@@ -92,7 +115,7 @@ func (f *DeviceFlow) PollDeviceToken(ctx context.Context, nonce, verifier string
 	if interval <= 0 {
 		interval = 2 * time.Second
 	}
-	endpoint := openAPIHost + DeviceTokenPollPath
+	endpoint := f.site.OpenAPI + DeviceTokenPollPath
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Errorf("qoder device poll: %w", err)
@@ -129,8 +152,8 @@ func (f *DeviceFlow) PollDeviceToken(ctx context.Context, nonce, verifier string
 
 // JobToken trades a device token for the job token the model calls use.
 func (f *DeviceFlow) JobToken(ctx context.Context, deviceToken string) (*JobToken, error) {
-	body, _ := json.Marshal(map[string]string{"clientId": f.clientID})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAPIHost+JobTokenPath, bytes.NewReader(body))
+	body, _ := json.Marshal(map[string]string{"clientId": f.site.ClientID})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.site.OpenAPI+JobTokenPath, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("qoder job token: create request: %w", err)
 	}
@@ -144,7 +167,7 @@ func (f *DeviceFlow) JobToken(ctx context.Context, deviceToken string) (*JobToke
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("qoder job token: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, &JobTokenHTTPError{StatusCode: resp.StatusCode, Body: sanitize(raw)}
 	}
 	var t JobToken
 	if err := json.Unmarshal(raw, &t); err != nil {
@@ -156,16 +179,30 @@ func (f *DeviceFlow) JobToken(ctx context.Context, deviceToken string) (*JobToke
 	return &t, nil
 }
 
-// RefreshJobToken trades a job token's refresh token for a new pair. The old
-// refresh token is spent, so the caller must keep the new one.
-func RefreshJobToken(ctx context.Context, client *http.Client, refreshToken string) (*JobToken, error) {
+// JobTokenHTTPError is a refused device-to-job token exchange.
+type JobTokenHTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *JobTokenHTTPError) Error() string {
+	return fmt.Sprintf("qoder job token: status %d: %s", e.StatusCode, e.Body)
+}
+
+// RefreshJobToken trades a job token's refresh token for a new pair on site
+// (nil is the global one). The old refresh token is spent, so the caller must
+// keep the new one.
+func RefreshJobToken(ctx context.Context, client *http.Client, site *Site, refreshToken string) (*JobToken, error) {
 	if strings.TrimSpace(refreshToken) == "" {
 		return nil, fmt.Errorf("qoder job token refresh: missing refresh token; sign in again")
 	}
 	if client == nil {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
-	return postJobRefresh(ctx, client, openAPIHost+JobTokenRefreshPath, refreshToken)
+	if site == nil {
+		site = Global
+	}
+	return postJobRefresh(ctx, client, site.OpenAPI+JobTokenRefreshPath, refreshToken)
 }
 
 func postJobRefresh(ctx context.Context, client *http.Client, endpoint, refreshToken string) (*JobToken, error) {
@@ -213,7 +250,8 @@ func (e *DeviceTokenRefreshHTTPError) Error() string {
 	return fmt.Sprintf("qoder device token refresh: upstream HTTP %d", e.StatusCode)
 }
 
-// RefreshDeviceToken rotates the device token used by account endpoints.
+// RefreshDeviceToken rotates the device token used by account endpoints; an
+// empty endpoint is the global site's.
 func RefreshDeviceToken(ctx context.Context, client *http.Client, endpoint, refreshToken string) (*DeviceToken, error) {
 	if strings.TrimSpace(refreshToken) == "" {
 		return nil, fmt.Errorf("qoder device token refresh: missing refresh token; sign in again")
@@ -222,7 +260,7 @@ func RefreshDeviceToken(ctx context.Context, client *http.Client, endpoint, refr
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
 	if endpoint == "" {
-		endpoint = openAPIHost + DeviceTokenRefreshPath
+		endpoint = Global.OpenAPI + DeviceTokenRefreshPath
 	}
 	body, err := json.Marshal(map[string]string{"refresh_token": refreshToken})
 	if err != nil {

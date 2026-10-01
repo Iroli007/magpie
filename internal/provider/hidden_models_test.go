@@ -21,6 +21,7 @@ func ids(es []Entry) []string {
 func TestHiddenModels(t *testing.T) {
 	isolate(t)
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	for _, id := range []string{"relay", "other"} {

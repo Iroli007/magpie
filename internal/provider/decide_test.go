@@ -17,6 +17,7 @@ import (
 // effort is picked only by it.
 func TestDecider(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	if err := Save(Provider{ID: "a", Name: "a", Key: "k", Chat: "http://127.0.0.1:1/v1", Models: []string{"m"}}); err != nil {
 		t.Fatal(err)
@@ -79,6 +80,7 @@ func TestAPIErrorDetail(t *testing.T) {
 // as each names it, and a key checked by the gateway's own free call.
 func TestDecideGateways(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	for id, want := range map[string][2]string{"typesafe": {ViaSystemOne, "jev-latest"}, "vercel-jev": {ViaVercel, "typesafe-ai/jev"}, "cloudflare-jev": {ViaCloudflare, "typesafe/jev"}} {
@@ -166,6 +168,7 @@ func TestFetchDecideOpenAIJevIDs(t *testing.T) {
 	isolate(t)
 	h := t.TempDir()
 	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
 	var auth string
@@ -240,6 +243,7 @@ func TestFetchDecideOpenAIJevIDs(t *testing.T) {
 func TestRouteDecider(t *testing.T) {
 	h := t.TempDir()
 	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
 	if _, _, err := RouteDecider(""); err == nil || !strings.Contains(err.Error(), "names no model") {
@@ -313,6 +317,7 @@ func TestRouteDecider(t *testing.T) {
 func TestRouteDeciderVercelAlias(t *testing.T) {
 	h := t.TempDir()
 	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
 	if err := Save(Provider{ID: "vercel-jev", Name: "Vercel", Key: "k", Decide: "https://ai-gateway.vercel.sh/typesafe"}); err != nil {
@@ -342,6 +347,7 @@ func TestRouteDeciderVercelAlias(t *testing.T) {
 func TestRouteDeciderCloudflareAlias(t *testing.T) {
 	h := t.TempDir()
 	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
 	if err := Save(Provider{ID: "cloudflare-jev", Name: "CF", Key: "k", Decide: "https://api.cloudflare.com/client/v4"}); err != nil {
@@ -361,6 +367,7 @@ func TestRouteDeciderCloudflareAlias(t *testing.T) {
 func TestRouteDeciderUnfetchedAmbiguous(t *testing.T) {
 	h := t.TempDir()
 	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
 	for _, p := range []Provider{
@@ -378,6 +385,7 @@ func TestRouteDeciderUnfetchedAmbiguous(t *testing.T) {
 	// two System One providers, catalogs not fetched, both default to jev-latest
 	h2 := t.TempDir()
 	t.Setenv("HOME", h2)
+	t.Setenv("USERPROFILE", h2)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h2, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(h2, ".cache"))
 	for _, p := range []Provider{

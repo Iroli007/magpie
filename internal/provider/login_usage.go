@@ -88,10 +88,12 @@ func builtinLogins(agent string) (logins []Login, ok bool) {
 		logins = wbLoginList(wbSiteOf(agent))
 	case CommandCodePlanID:
 		logins = cmdLoginList()
-	case "qoder":
-		logins = loginsOf(qoderLogins())
+	case "qoder", QoderCNID:
+		logins = loginsOf(qoderLoginsOf(agent))
 	case "zed":
 		logins = zedLoginList()
+	case "devin":
+		logins = devinLoginList()
 	case "factory":
 		logins = factoryLoginList()
 	case MiMoID:
@@ -108,16 +110,29 @@ func builtinLogins(agent string) (logins []Login, ok bool) {
 	return logins, true
 }
 
+// loginProvider is the id of the provider l signs in: a plugin's
+// ("plugin:grok") is its provider's, grok for a moved Grok, whose proxy
+// picks are kept under it.
+func loginProvider(l Login) string {
+	if id, ok := strings.CutPrefix(l.Agent, "plugin:"); ok {
+		return PluginID(id)
+	}
+	return l.Agent
+}
+
 func loginQuota(ctx context.Context, l Login) SubscriptionQuota {
-	ctx = ViaLogin(ctx, l.Agent, l.User) // asked through the account's own proxy
+	ctx = ViaLogin(ctx, loginProvider(l), l.User) // asked through the account's own proxy
 	if strings.HasPrefix(l.Agent, "plugin:") {
 		return pluginLoginQuota(ctx, l)
 	}
-	if l.Agent == "qoder" {
+	if l.Agent == "qoder" || l.Agent == QoderCNID {
 		return qoderLoginQuota(ctx, l)
 	}
 	if l.Agent == "zed" {
 		return zedLoginQuota(ctx, l)
+	}
+	if l.Agent == "devin" {
+		return devinLoginQuota(ctx, l)
 	}
 	if l.Agent == "factory" {
 		return factoryLoginQuota(ctx, l)
@@ -152,11 +167,19 @@ func loginQuota(ctx context.Context, l Login) SubscriptionQuota {
 		return SubscriptionQuota{Provider: l.Agent, Plan: l.Plan, Windows: []QuotaWindow{}, Error: "not signed in"}
 	}
 	q := SubscriptionQuota{Provider: l.Agent, Plan: l.Plan, Windows: []QuotaWindow{}}
+	if l.Agent == "claude" && !l.Active {
+		// a saved account is never asked: what Claude Code told of it
+		ws, err := claudeWindows(ctx, l.User, false)
+		q.Windows = ws
+		if err != nil {
+			q.Error = err.Error()
+		}
+		return q
+	}
 	var tok, accountID string
 	var err error
 	switch {
-	case l.Active && l.Agent == "claude":
-		tok, err = claudeToken(ctx)
+	case l.Agent == "claude": // Claude Code reads its own (claudeWindows)
 	case l.Active:
 		tok, accountID, err = codexToken(ctx, codexAuthPath())
 	default:
@@ -164,8 +187,7 @@ func loginQuota(ctx context.Context, l Login) SubscriptionQuota {
 	}
 	if err == nil {
 		if l.Agent == "claude" {
-			q.Windows, err = claudeWindows(ctx, l.User, tok)
-			q.Resets = claudeResetsOf(l.User)
+			q.Windows, err = claudeWindows(ctx, l.User, true)
 		} else {
 			var plan string
 			if plan, q.Windows, q.Resets, err = codexWindows(ctx, tok, accountID); plan != "" {

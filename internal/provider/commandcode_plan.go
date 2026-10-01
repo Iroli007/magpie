@@ -62,24 +62,113 @@ var cmdModels = []catalog.Model{
 }
 
 // cmdGoModels are the models the Go plan is let use, as the CLI's own
-// table has it (1.72.2): the "opensource" ones, less those it blocks for
-// Go (gpt-5.6-sol, claude-sonnet-5-5, grok-4.6 and the like) —
-//
-//	"individual-go":{allowedCategories:[zr],blockedModels:Qr=[…]}
-//
-// Command Code has no list to ask for them: a model the plan hasn't is
-// refused with MODEL_NOT_IN_PLAN.
+// table has it (1.73.0): every model its picker shows (wD, less the
+// hidden) but the "premium" ones and those it blocks for Go
+// (cmdGoRefused). They stand in until Command Code's list is fetched
+// (cmdGoFetch), and give that list the reasoning levels and pictures it
+// doesn't say.
 var cmdGoModels = []catalog.Model{
 	{ID: "gpt-6-luna", Name: "GPT-6 Luna", Context: 1_050_000, Images: true, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
 	{ID: "gpt-5.6-luna", Name: "GPT-5.6 Luna", Context: 1_050_000, Images: true, Efforts: []string{"low", "medium", "high", "xhigh", "max"}},
 	{ID: "deepseek/deepseek-v4-pro", Name: "DeepSeek V4 Pro", Context: 1_000_000, Efforts: []string{"high", "max"}},
 	{ID: "deepseek/deepseek-v4-flash", Name: "DeepSeek V4 Flash", Context: 1_000_000, Efforts: []string{"high", "max"}},
+	{ID: "deepseek/deepseek-v4-flash-vision-exp", Name: "DeepSeek V4 Flash Vision (exp)", Context: 1_000_000, Images: true, Efforts: []string{"high", "max"}},
+	{ID: "deepseek/deepseek-v4-flash-fast", Name: "DeepSeek V4 Flash Fast", Context: 1_000_000, Efforts: []string{"low", "high", "max"}},
+	{ID: "deepseek/deepseek-v4.1-flash", Name: "DeepSeek V4.1 Flash", Context: 1_000_000, Images: true, Efforts: []string{"low", "high", "max"}},
+	{ID: "deepseek/deepseek-v4.1-flash-fast", Name: "DeepSeek V4.1 Flash Fast", Context: 1_000_000, Images: true, Efforts: []string{"low", "high", "max"}},
 	{ID: "moonshotai/Kimi-K3", Name: "Kimi K3", Context: 1_000_000, Images: true, Efforts: []string{"low", "high", "max"}},
+	{ID: "moonshotai/Kimi-K2.7-Code", Name: "Kimi K2.7 Code", Context: 256_000, Images: true},
+	{ID: "moonshotai/Kimi-K2.7-Code-Highspeed", Name: "Kimi K2.7 Code HighSpeed", Context: 262_000, Images: true},
+	{ID: "moonshotai/Kimi-K2.6", Name: "Kimi K2.6", Context: 256_000, Images: true},
+	{ID: "moonshotai/Kimi-K2.5", Name: "Kimi K2.5", Context: 256_000, Images: true},
+	{ID: "z-ai/glm-5.3-flash", Name: "GLM-5.3 Flash", Context: 1_048_576, Images: true, Efforts: []string{"low", "high", "max"}},
+	{ID: "z-ai/glm-5.3-flashx", Name: "GLM-5.3 FlashX", Context: 1_000_000, Images: true, Efforts: []string{"low", "high", "max"}},
 	{ID: "zai-org/GLM-5.3", Name: "GLM-5.3", Context: 1_000_000, Efforts: []string{"low", "high", "max"}},
-	{ID: "MiniMaxAI/MiniMax-M3", Name: "MiniMax M3", Context: 1_000_000},
-	{ID: "Qwen/Qwen3.8-Max", Name: "Qwen 3.8 Max", Context: 1_000_000, Images: true, Efforts: []string{"low", "medium", "xhigh"}},
-	{ID: "Qwen/Qwen3.8-Flash", Name: "Qwen 3.8 Flash", Context: 1_000_000},
+	{ID: "zai-org/GLM-5.2", Name: "GLM-5.2", Context: 1_000_000, Efforts: []string{"high", "max"}},
+	{ID: "zai-org/GLM-5.2-Fast", Name: "GLM-5.2 Fast", Context: 1_000_000},
+	{ID: "zai-org/GLM-5.1", Name: "GLM-5.1", Context: 200_000},
+	{ID: "zai-org/GLM-5", Name: "GLM-5", Context: 200_000},
+	{ID: "MiniMaxAI/MiniMax-M3", Name: "MiniMax M3", Context: 1_000_000, Images: true, Efforts: []string{"low", "medium", "high"}},
+	{ID: "MiniMaxAI/MiniMax-M2.7", Name: "MiniMax M2.7", Context: 200_000},
+	{ID: "MiniMaxAI/MiniMax-M2.5", Name: "MiniMax M2.5", Context: 200_000},
 	{ID: "xiaomi/mimo-v2.6-pro", Name: "MiMo V2.6 Pro", Context: 1_048_576, Images: true},
+	{ID: "xiaomi/mimo-v2.6-flash", Name: "MiMo V2.6 Flash", Context: 1_048_576, Images: true},
+	{ID: "xiaomi/mimo-v2.5-pro", Name: "MiMo V2.5 Pro", Context: 1_000_000},
+	{ID: "xiaomi/mimo-v2.5", Name: "MiMo V2.5", Context: 1_000_000, Images: true},
+	{ID: "Qwen/Qwen3.8-Omni-Flash", Name: "Qwen 3.8 Omni Flash", Context: 1_000_000, Images: true, Efforts: []string{"low", "medium", "xhigh"}},
+	{ID: "Qwen/Qwen3.8-Max-0902", Name: "Qwen 3.8 Max 0902", Context: 1_000_000, Images: true, Efforts: []string{"low", "medium", "xhigh"}},
+	{ID: "Qwen/Qwen3.8-Max", Name: "Qwen 3.8 Max", Context: 1_000_000, Images: true, Efforts: []string{"low", "medium", "xhigh"}},
+	{ID: "Qwen/Qwen3.8-27B", Name: "Qwen 3.8 27B", Context: 262_144, Images: true, Efforts: []string{"low", "medium", "xhigh"}},
+	{ID: "Qwen/Qwen3.8-Flash", Name: "Qwen 3.8 Flash", Context: 1_000_000, Images: true, Efforts: []string{"low", "medium", "xhigh"}},
+	{ID: "Qwen/Qwen3.7-Max", Name: "Qwen 3.7 Max", Context: 1_000_000},
+	{ID: "Qwen/Qwen3.7-Plus", Name: "Qwen 3.7 Plus", Context: 1_000_000, Images: true},
+	{ID: "Qwen/Qwen3.7-Flash", Name: "Qwen 3.7 Flash", Context: 1_000_000, Images: true},
+	{ID: "Qwen/Qwen3.6-Max-Preview", Name: "Qwen 3.6 Max Preview", Context: 200_000},
+	{ID: "Qwen/Qwen3.6-Plus", Name: "Qwen 3.6 Plus", Context: 200_000, Images: true},
+	{ID: "meituan/LongCat-2.0", Name: "LongCat 2.0", Context: 1_048_576},
+	{ID: "stepfun/Step-5-Preview", Name: "Step 5 Preview", Context: 1_000_000, Images: true, Efforts: []string{"low", "medium", "high"}},
+	{ID: "stepfun/Step-3.7-Flash", Name: "Step 3.7 Flash", Context: 256_000, Images: true},
+	{ID: "stepfun/Step-3.5-Flash", Name: "Step 3.5 Flash", Context: 262_144},
+	{ID: "tencent/hy3-paid", Name: "Tencent Hy3", Context: 262_144},
+	{ID: "tencent/hy4-preview", Name: "Tencent Hy4 Preview", Context: 1_048_576, Efforts: []string{"low", "medium", "high"}},
+	{ID: "google/gemini-3.6-flash", Name: "Gemini 3.6 Flash", Context: 1_000_000, Images: true, Efforts: []string{"low", "medium", "high"}},
+	{ID: "google/gemini-3.5-flash-lite", Name: "Gemini 3.5 Flash Lite", Context: 1_000_000, Images: true, Efforts: []string{"low", "medium", "high"}},
+	{ID: "nvidia/nemotron-3-ultra-550b-a55b", Name: "Nemotron 3 Ultra", Context: 1_000_000},
+	{ID: "thinkingmachines/inkling", Name: "Inkling", Context: 256_000, Images: true},
+	{ID: "thinkingmachines/inkling-small", Name: "Inkling Small", Context: 1_000_000, Images: true},
+	{ID: "stealth/space-bunny-alpha", Name: "Space Bunny Alpha", Context: 1_000_000, Images: true, Efforts: []string{"low", "medium", "high"}},
+	{ID: "stealth/pixel-canary", Name: "Pixel Canary", Context: 262_144, Images: true, Efforts: []string{"low", "medium", "xhigh"}},
+	{ID: "poolside/laguna-s-2.1-free", Name: "Laguna S 2.1", Context: 256_000},
+	{ID: "inclusionai/ling-3.0-flash-free", Name: "Ling 3.0 Flash", Context: 256_000},
+	{ID: "inclusionai/ling-3.0-flash-sante:free", Name: "Ling 3.0 Flash Sante", Context: 262_144},
+	{ID: "inclusionai/ling-3.1-flash:free", Name: "Ling 3.1 Flash", Context: 262_144, Efforts: []string{"low", "medium", "high"}},
+	{ID: "meta/muse-spark-1.2-contributor", Name: "Muse Spark 1.2 Contributor", Context: 1_048_576, Images: true, Efforts: []string{"low", "medium", "high", "xhigh"}},
+	{ID: "meta/muse-spark-1.3-contributor", Name: "Muse Spark 1.3 Contributor", Context: 1_048_576, Images: true, Efforts: []string{"low", "medium", "high", "xhigh"}},
+	{ID: "xai/grok-4.5", Name: "Grok 4.5", Context: 500_000, Images: true, Efforts: []string{"low", "medium", "high"}},
+}
+
+// cmdGoRefused are the models of Command Code's list the Go plan is
+// refused, as the CLI's table has it (1.73.0): its "premium" ones, and
+// those "individual-go" blocks —
+//
+//	"individual-go":{allowedCategories:[qo],blockedModels:Xo=[…]}
+//
+// A model the table doesn't name the CLI lets any plan pick; one the plan
+// hasn't after all is refused with MODEL_NOT_IN_PLAN.
+var cmdGoRefused = map[string]bool{
+	// premium
+	"claude-sonnet-5": true, "claude-sonnet-4-6": true, "claude-fable-5-1": true, "claude-fable-5": true,
+	"claude-opus-5-5": true, "claude-opus-5": true, "claude-opus-4-8": true, "claude-opus-4-7": true,
+	"claude-haiku-4-5-20251001": true, "gpt-6-astra": true, "gpt-6.1-sol": true, "gpt-6-sol": true,
+	"gpt-5.6-terra": true, "gpt-5.5": true, "gpt-5.4": true, "gpt-5.3-codex": true, "gpt-5.4-mini": true,
+	"google/gemini-3.5-flash": true, "google/gemini-3.1-flash-lite": true, "sakana/fugu-ultra": true,
+	"meta/muse-spark-1.1": true,
+	// blocked for Go
+	"claude-sonnet-5-5": true, "gpt-5.6-sol": true, "xai/grok-4.6": true, "xai/grok-4.7": true,
+	"meta/muse-spark-1.2": true, "meta/muse-spark-1.3": true, "xiaomi/mimo-v2.6-pro-ultraspeed": true,
+	"google/gemini-3.7-flash": true, "google/gemini-3.8-flash": true,
+}
+
+// cmdGoFetch is the Go plan's models: Command Code's list, less what Go
+// is refused. The list is the Provider API's, which answers without a key
+// (Go's has no Provider API), and takes its reasoning levels and pictures
+// from cmdGoModels.
+func cmdGoFetch(ctx context.Context) ([]catalog.Model, error) {
+	base := cmdAPI + "/provider/v1"
+	ms, err := catalog.FetchURL(ctx, base+"/models", "", false, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []catalog.Model
+	for _, m := range catalog.Decorate(catalog.Chat(ms), cmdGoModels) {
+		if !cmdGoRefused[m.ID] {
+			out = append(out, m)
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("Command Code listed no models for the Go plan")
+	}
+	return out, catalog.SaveLive(CommandCodePlanID, base, out)
 }
 
 // cmdAuth is an account's key, as auth.json and the sign-in name it.
@@ -206,10 +295,11 @@ func cmdProvider(who, plan string, a cmdAuth) Provider {
 	}
 	// the plan's list is the Provider API's, with what each model is
 	// served on; it is asked as a keyed provider's is. Go's key has no
-	// Provider API: its list is the CLI's.
+	// Provider API: its list is the same one, asked without it, less what
+	// Go is refused.
 	acct.fetch = func(ctx context.Context) ([]catalog.Model, error) {
 		if cmdPlanNow(ctx, a, plan) == "Go" {
-			return cmdGoModels, nil
+			return cmdGoFetch(ctx)
 		}
 		keyed := p
 		keyed.Account, keyed.Key = nil, a.APIKey

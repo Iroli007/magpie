@@ -67,6 +67,9 @@
 .pm-chip { display: inline-flex; align-items: center; height: 17px; padding: 0 6px; border-radius: 5px; font-size: 10.5px; font-weight: 500; background: var(--pill); color: var(--fg-2); }
 .pm-chip.up { background: var(--accent-soft); color: var(--accent); }
 .pm-chip.bad { background: var(--red-soft); color: var(--red); }
+.pm-chip.moved { gap: 4px; background: var(--accent-soft); color: var(--accent); }
+.pm-chip.moved .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.pm-row .sub.ask { color: var(--fg); }
 .pm-chip.soft { background: none; box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); }
 
 /* a plugin's one button */

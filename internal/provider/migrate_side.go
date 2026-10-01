@@ -17,6 +17,7 @@ import (
 func init() {
 	movers["devin"] = &mover{
 		pkg:    "@magpie-community/opencode-devin-auth",
+		min:    "0.1.5", // a failure's status and its sign-in mark as the built-in's
 		agents: []string{"devin"},
 		out: func() ([]Moving, error) {
 			var out []Moving
@@ -25,9 +26,17 @@ func init() {
 				if err != nil {
 					continue
 				}
+				// the CLI's own account has its plan from the CLI, as the
+				// built-in shows it, not saved on its row
+				plan := l.Plan
+				if l.Home == "" {
+					if _, p, ok := devinIdentity(); ok && p != "" {
+						plan = p
+					}
+				}
 				md := map[string]any{"email": l.User}
-				if l.Plan != "" {
-					md["plan"] = l.Plan
+				if plan != "" {
+					md["plan"] = plan
 				}
 				if s := strings.TrimRight(server, "/"); s != "" && s != devinServer {
 					md["server"] = s
@@ -35,7 +44,7 @@ func init() {
 				if l.Home == "" {
 					md["cli"] = true // the plugin reads the CLI's key again, as the built-in does
 				}
-				out = append(out, Moving{User: l.User, First: l.Active, On: l.On, Lapsed: l.Lapsed != "", Own: l.Home == "",
+				out = append(out, Moving{User: l.User, First: l.Active, On: l.On, Lapsed: l.Lapsed != "", Plan: plan, Own: l.Home == "",
 					Auth: map[string]any{"type": "api", "key": key, "metadata": md}})
 			}
 			return out, nil
@@ -88,6 +97,7 @@ func init() {
 	// names, as the built-in does: the homes stay where they are.
 	movers["grok"] = &mover{
 		pkg:    "@magpie-community/opencode-grok-auth",
+		min:    "0.1.5", // a failure's status and its sign-in mark as the built-in's; grok-4.7's reasoning levels; a token Grok refuses early reads as expired
 		agents: []string{"grok"},
 		out: func() ([]Moving, error) {
 			var out []Moving
@@ -100,7 +110,7 @@ func init() {
 				if !c.ExpiresAt.IsZero() {
 					exp = c.ExpiresAt.UnixMilli()
 				}
-				out = append(out, Moving{User: l.User, First: l.Active, On: l.On, Lapsed: l.Lapsed != "", Own: samePath(l.Home, GrokHome()),
+				out = append(out, Moving{User: l.User, First: l.Active, On: l.On, Lapsed: l.Lapsed != "", Plan: l.Plan, Own: samePath(l.Home, GrokHome()),
 					Auth: map[string]any{"type": "oauth", "refresh": l.Home, "access": c.Key, "expires": exp, "accountId": firstNonEmpty(c.Email, l.User)}})
 			}
 			return out, nil
@@ -129,6 +139,7 @@ func init() {
 
 	movers[CommandCodePlanID] = &mover{
 		pkg:    "@magpie-community/opencode-commandcode-auth",
+		min:    "0.1.6", // a failure's status and its sign-in mark as the built-in's; a Go account lists Go's models
 		agents: []string{CommandCodePlanID},
 		out: func() ([]Moving, error) {
 			var out []Moving
@@ -146,7 +157,7 @@ func init() {
 				if l.Own {
 					md["cli"] = true // the plugin reads the CLI's key again, as the built-in does
 				}
-				out = append(out, Moving{User: l.User, First: l.Active, On: l.On, Lapsed: l.Lapsed != "", Own: l.Own,
+				out = append(out, Moving{User: l.User, First: l.Active, On: l.On, Lapsed: l.Lapsed != "", Plan: l.Plan, Own: l.Own,
 					Auth: map[string]any{"type": "api", "key": l.auth.APIKey, "metadata": md}})
 			}
 			return out, nil
@@ -199,6 +210,7 @@ func init() {
 	// the plugin reads cursor-agent's token as the built-in does.
 	movers["cursor"] = &mover{
 		pkg:    "@magpie-community/opencode-cursor-auth",
+		min:    "0.1.5", // a failure's status and its sign-in mark as the built-in's
 		agents: []string{"cursor"},
 		out: func() ([]Moving, error) {
 			if CursorExecutable() == "" || cursorSignedOut() {

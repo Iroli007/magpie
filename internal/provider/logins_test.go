@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func TestCodexLogins(t *testing.T) {
 	if strings.Join(users, ",") != "me@example.com,work@example.com" || active != "work@example.com" {
 		t.Fatalf("logins %v, active %q", users, active)
 	}
-	if fi, err := os.Stat(loginsPath()); err != nil || fi.Mode().Perm() != 0o600 {
+	if fi, err := os.Stat(loginsPath()); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("logins.json mode: %v %v", fi, err)
 	}
 	// the agent refreshes the active login in place; a switch keeps that

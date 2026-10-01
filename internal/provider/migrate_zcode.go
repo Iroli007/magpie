@@ -12,26 +12,21 @@ import (
 // the requests need as its refresh, as the plugin's own sign-in keeps
 // them. Nothing here rotates: a key lasts until it is deleted.
 //
-// ZCode's own sign-in goes as a copy of what magpie reads now, marked as
-// ZCode's (source "zcode"): the plugin from 0.1.2 reads ZCode's own
-// credentials in its place for each request, as the built-in does, so it
-// follows ZCode's switches; an older one uses the copy. A key or a team
-// seat lasts, and the copy with it; ZCode's session token alone (the Start
-// Plan) is renewed by ZCode, and a copy would lapse behind it, so such an
-// account stops the move and the built-in carries on.
+// ZCode's own sign-in goes marked as ZCode's (source "zcode"), with a copy
+// of what magpie reads now: the plugin, 0.1.2 on (the move installs no
+// older), reads ZCode's own credentials in its place for each request, as
+// the built-in does, so it follows ZCode's switches and the session token
+// ZCode renews (the Start Plan).
 func init() {
 	movers["zcode"] = &mover{
 		pkg:    "@magpie-community/opencode-zcode-auth",
+		min:    "0.1.5", // a failure's status and its sign-in mark as the built-in's; MCP quota set aside as the built-in's
 		agents: []string{"zcode"},
 		out: func() ([]Moving, error) {
 			var out []Moving
 			for _, l := range zcodeLogins() {
-				k := l.key
-				if l.Own && k.Key == "" && !k.team() {
-					return nil, errors.New("ZCode's own sign-in has no coding plan key, only ZCode's session, which the plugin can't follow")
-				}
 				// the own account's copy goes back to nothing: ZCode keeps it
-				out = append(out, Moving{User: l.User, First: l.Active, On: l.On, Lapsed: l.Lapsed != "", Own: l.Own, Auth: zcodeOut(l.User, l.Plan, k, l.Own)})
+				out = append(out, Moving{User: l.User, First: l.Active, On: l.On, Lapsed: l.Lapsed != "", Plan: l.Plan, Own: l.Own, Auth: zcodeOut(l.User, l.Plan, l.key, l.Own)})
 			}
 			return out, nil
 		},
@@ -99,7 +94,7 @@ func zcodeOut(user, plan string, k zcodeKey, own bool) map[string]any {
 		}
 	}
 	expires := int64(0)
-	if k.Key == "" && !k.team() {
+	if k.Key == "" && !k.team() && !own { // ZCode's own is read anew each time
 		if exp, _ := jwtClaims(k.JWT)["exp"].(float64); exp > 0 {
 			expires = int64(exp) * 1000
 		}

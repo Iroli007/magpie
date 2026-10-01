@@ -20,19 +20,33 @@ import (
 // and removal. Credentials are decoded into private values on every read.
 var qoderMu sync.Mutex
 var qoderClient = &http.Client{Timeout: 20 * time.Second}
-var qoderAPI = qoder.APIHost
+
+// Qoder's two sites are two subscriptions: "qoder" (qoder.com) and "qoder-cn"
+// (qoder.cn), whose accounts exist only there. Each keeps its own accounts in
+// logins.json under its id, and each credential names its site.
+var qoderAgents = []string{qoder.ProviderKey, QoderCNID}
+
+// QoderCNID is the Qoder CN subscription's id, the same as Qoder CN's agent.
+const QoderCNID = qoder.CNProviderKey
+
+func qoderSiteOf(agent string) *qoder.Site { return qoder.SiteOf(agent) }
 
 // A rotated pair whose disk write failed must never spend its predecessor
 // again. Retry persisting this private blob on the next access.
 var qoderPending = map[string]struct{ before, after json.RawMessage }{}
 
-func qoderPendingKey(user string) string { return loginsPath() + ":" + strings.ToLower(user) }
+func qoderPendingKey(agent, user string) string {
+	if agent != qoder.ProviderKey {
+		user = agent + ":" + user
+	}
+	return loginsPath() + ":" + strings.ToLower(user)
+}
 
 func qoderCurrent(l savedLogin) (qoder.Credential, bool, bool) {
-	key := qoderPendingKey(l.User)
+	key := qoderPendingKey(l.Agent, l.User)
 	if p, ok := qoderPending[key]; ok {
 		if string(p.before) == string(l.Auth) {
-			c, valid := qoderSaved(savedLogin{Auth: p.after})
+			c, valid := qoderSaved(savedLogin{Agent: l.Agent, Auth: p.after})
 			return c, valid, true
 		}
 		delete(qoderPending, key)
@@ -49,11 +63,11 @@ const qoderRefreshTimeout = 20 * time.Second
 // qoderLookup reads one saved account. loginsMu is held only for the read, so
 // a Qoder refresh never stalls the other subscriptions; qoderMu, held by the
 // caller, keeps every Qoder auth write out while it is refreshed.
-func qoderLookup(user string) (savedLogin, bool) {
+func qoderLookup(agent, user string) (savedLogin, bool) {
 	loginsMu.Lock()
 	defer loginsMu.Unlock()
 	for _, l := range readLogins() {
-		if l.Agent == "qoder" && strings.EqualFold(l.User, user) {
+		if l.Agent == agent && strings.EqualFold(l.User, user) {
 			return l, true
 		}
 	}
@@ -68,13 +82,13 @@ func qoderPersist(l savedLogin, c qoder.Credential, renewed bool) error {
 	if err != nil {
 		return err
 	}
-	key := qoderPendingKey(l.User)
+	key := qoderPendingKey(l.Agent, l.User)
 	loginsMu.Lock()
 	defer loginsMu.Unlock()
 	ls := readLogins()
-	err = fmt.Errorf("Qoder: couldn't read the saved sign-in of %s back", l.User)
+	err = fmt.Errorf("%s: couldn't read the saved sign-in of %s back", qoder.SiteOf(l.Agent).Name, l.User)
 	for i := range ls {
-		if ls[i].Agent != "qoder" || !strings.EqualFold(ls[i].User, l.User) {
+		if ls[i].Agent != l.Agent || !strings.EqualFold(ls[i].User, l.User) {
 			continue
 		}
 		ls[i].Auth = auth
@@ -100,17 +114,17 @@ var ErrQoderSignIn = errors.New("Qoder sign-in")
 // qoderRefreshFailed marks the account lapsed when Qoder refused its job
 // refresh token: that sign-in is gone and has to be made again. A refresh
 // that never got an answer marks nothing.
-func qoderRefreshFailed(user string, err error) error {
+func qoderRefreshFailed(agent, user string, err error) error {
 	var job *qoder.JobTokenRefreshHTTPError
 	if !errors.As(err, &job) || job.StatusCode != http.StatusUnauthorized && job.StatusCode != http.StatusForbidden {
 		return err
 	}
-	msg := user + "'s Qoder sign-in has expired — sign in again"
+	msg := user + "'s " + qoder.SiteOf(agent).Name + " sign-in has expired — sign in again"
 	loginsMu.Lock()
 	defer loginsMu.Unlock()
 	ls := readLogins()
 	for i := range ls {
-		if ls[i].Agent == "qoder" && strings.EqualFold(ls[i].User, user) {
+		if ls[i].Agent == agent && strings.EqualFold(ls[i].User, user) {
 			ls[i].Lapsed = msg
 		}
 	}
@@ -123,6 +137,9 @@ func qoderWho(c qoder.Credential) string { return firstNonEmpty(c.Email, c.UID) 
 func qoderSaved(l savedLogin) (qoder.Credential, bool) {
 	var c qoder.Credential
 	err := json.Unmarshal(l.Auth, &c)
+	if l.Agent == qoder.CNProviderKey {
+		c.Site = qoder.CNProviderKey // the account's list says its site, whatever the blob does
+	}
 	return c, err == nil && c.UID != "" && c.Token != ""
 }
 
@@ -180,11 +197,14 @@ func migrateQoder() error {
 	return os.Remove(path)
 }
 
-func qoderLogins() []sideLogin {
-	if migrateQoder() != nil {
+// qoderLogins are the global site's accounts.
+func qoderLogins() []sideLogin { return qoderLoginsOf(qoder.ProviderKey) }
+
+func qoderLoginsOf(agent string) []sideLogin {
+	if agent == qoder.ProviderKey && migrateQoder() != nil {
 		return nil
 	}
-	ls := sideLogins("qoder", "", func(l savedLogin) bool { _, ok := qoderSaved(l); return ok })
+	ls := sideLogins(agent, "", func(l savedLogin) bool { _, ok := qoderSaved(l); return ok })
 	for i := range ls {
 		ls[i].Lapsed = ls[i].saved.Lapsed // a refused refresh shows on the account
 	}
@@ -193,15 +213,25 @@ func qoderLogins() []sideLogin {
 
 func QoderSignedIn() bool { return len(qoderLogins()) > 0 }
 
-// QoderCredential returns an independent snapshot for the selected account.
+// QoderCredential returns an independent snapshot for the selected account
+// on the global site.
 func QoderCredential(ctx context.Context, user string) (*qoder.Credential, error) {
-	if err := migrateQoder(); err != nil {
-		return nil, err
+	return QoderCredentialOf(ctx, qoder.ProviderKey, user)
+}
+
+// QoderCredentialOf is QoderCredential for the site agent names ("qoder" or
+// "qoder-cn").
+func QoderCredentialOf(ctx context.Context, agent, user string) (*qoder.Credential, error) {
+	name := qoder.SiteOf(agent).Name
+	if agent == qoder.ProviderKey {
+		if err := migrateQoder(); err != nil {
+			return nil, err
+		}
 	}
 	if user == "" {
-		ls := qoderLogins()
+		ls := qoderLoginsOf(agent)
 		if len(ls) == 0 {
-			return nil, fmt.Errorf("Qoder: not signed in (%w)", ErrQoderSignIn)
+			return nil, fmt.Errorf("%s: not signed in (%w)", name, ErrQoderSignIn)
 		}
 		user = ls[0].User
 	}
@@ -210,13 +240,13 @@ func QoderCredential(ctx context.Context, user string) (*qoder.Credential, error
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	l, found := qoderLookup(user)
+	l, found := qoderLookup(agent, user)
 	if !found {
-		return nil, fmt.Errorf("no Qoder account %q (%w)", user, ErrQoderSignIn)
+		return nil, fmt.Errorf("no %s account %q (%w)", name, user, ErrQoderSignIn)
 	}
 	c, ok, changed := qoderCurrent(l)
 	if !ok {
-		return nil, fmt.Errorf("Qoder: unreadable sign-in (%w)", ErrQoderSignIn)
+		return nil, fmt.Errorf("%s: unreadable sign-in (%w)", name, ErrQoderSignIn)
 	}
 	if c.MachineID == "" {
 		c.MachineID = qoder.NewMachineID()
@@ -231,7 +261,7 @@ func QoderCredential(ctx context.Context, user string) (*qoder.Credential, error
 			if c.RefreshToken == "" { // nothing to refresh with: sign in again
 				err = errors.Join(ErrQoderSignIn, err)
 			}
-			return nil, qoderRefreshFailed(l.User, err)
+			return nil, qoderRefreshFailed(agent, l.User, err)
 		}
 		c, changed, renewed = fresh, true, true
 	}
@@ -247,12 +277,18 @@ func qoderUser(c *qoder.Credential) *qoder.User {
 	return &qoder.User{UID: c.UID, Token: c.Token, Name: c.Name, Email: c.Email, MachineID: c.MachineID}
 }
 
+// qoderSave keeps c under its site's accounts.
 func qoderSave(c qoder.Credential) error {
+	site := c.OnSite()
+	agent := site.ID
 	if c.UID == "" || c.Token == "" {
-		return fmt.Errorf("Qoder: incomplete sign-in")
+		return fmt.Errorf("%s: incomplete sign-in", site.Name)
 	}
-	if err := migrateQoder(); err != nil {
-		return err
+	if agent == qoder.ProviderKey {
+		c.Site = "" // a global sign-in is saved as it always was
+		if err := migrateQoder(); err != nil {
+			return err
+		}
 	}
 	qoderMu.Lock()
 	defer qoderMu.Unlock()
@@ -267,12 +303,12 @@ func qoderSave(c qoder.Credential) error {
 	defer loginsMu.Unlock()
 	ls := readLogins()
 	for i := range ls {
-		if ls[i].Agent != "qoder" {
+		if ls[i].Agent != agent {
 			continue
 		}
 		old, ok := qoderSaved(ls[i])
 		if ok && old.UID == c.UID {
-			oldKey := qoderPendingKey(ls[i].User)
+			oldKey := qoderPendingKey(agent, ls[i].User)
 			ls[i].Auth, ls[i].User, ls[i].Seen, ls[i].Lapsed = auth, qoderWho(c), time.Now().UTC(), ""
 			if err := writeLogins(ls); err != nil {
 				return err
@@ -281,29 +317,29 @@ func qoderSave(c qoder.Credential) error {
 			return nil
 		}
 	}
-	return writeLogins(append(ls, savedLogin{Agent: "qoder", User: qoderWho(c), Auth: auth, On: true, Seen: time.Now().UTC()}))
+	return writeLogins(append(ls, savedLogin{Agent: agent, User: qoderWho(c), Auth: auth, On: true, Seen: time.Now().UTC()}))
 }
 
-func qoderFetchModels(ctx context.Context, user string) ([]catalog.Model, error) {
-	c, err := QoderCredential(ctx, user)
+func qoderFetchModels(ctx context.Context, agent, user string) ([]catalog.Model, error) {
+	c, err := QoderCredentialOf(ctx, agent, user)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	raw, err := qoder.FetchModels(ctx, qoderClient, qoderAPI, qoderUser(c))
+	raw, err := qoder.FetchModels(ctx, qoderClient, c.OnSite().API, qoderUser(c))
 	if err != nil {
 		return nil, err
 	}
-	ms, err := qoder.ParseModels(raw)
+	ms, err := qoder.ParseModels(raw, agent)
 	if err != nil {
 		return nil, err
 	}
 	qoderMu.Lock()
-	err = editSideLogin("qoder", qoderWho(*c), func(ls []savedLogin, i int) ([]savedLogin, error) {
+	err = editSideLogin(agent, qoderWho(*c), func(ls []savedLogin, i int) ([]savedLogin, error) {
 		latest, ok := qoderSaved(ls[i])
 		if !ok || latest.UID != c.UID {
-			return nil, fmt.Errorf("Qoder: account changed while fetching models")
+			return nil, fmt.Errorf("%s: account changed while fetching models", qoder.SiteOf(agent).Name)
 		}
 		latest.Models = raw
 		ls[i].Auth, _ = json.Marshal(latest)
@@ -313,20 +349,25 @@ func qoderFetchModels(ctx context.Context, user string) ([]catalog.Model, error)
 	if err != nil {
 		return nil, err
 	}
-	return ms, catalog.SaveLive("qoder", "", ms)
+	return ms, catalog.SaveLive(agent, "", ms)
 }
 
 // QoderModel accepts only an enabled model in this account's own model list.
 func QoderModel(ctx context.Context, user, key string) (qoder.ModelInfo, error) {
-	c, err := QoderCredential(ctx, user)
+	return QoderModelOf(ctx, qoder.ProviderKey, user, key)
+}
+
+// QoderModelOf is QoderModel for the site agent names.
+func QoderModelOf(ctx context.Context, agent, user, key string) (qoder.ModelInfo, error) {
+	c, err := QoderCredentialOf(ctx, agent, user)
 	if err != nil {
 		return qoder.ModelInfo{}, err
 	}
 	if len(c.Models) == 0 {
-		if _, err := qoderFetchModels(ctx, qoderWho(*c)); err != nil {
+		if _, err := qoderFetchModels(ctx, agent, qoderWho(*c)); err != nil {
 			return qoder.ModelInfo{}, err
 		}
-		c, err = QoderCredential(ctx, qoderWho(*c))
+		c, err = QoderCredentialOf(ctx, agent, qoderWho(*c))
 		if err != nil {
 			return qoder.ModelInfo{}, err
 		}
@@ -340,57 +381,62 @@ func QoderModel(ctx context.Context, user, key string) (qoder.ModelInfo, error) 
 			return m, nil
 		}
 	}
-	return qoder.ModelInfo{}, fmt.Errorf("Qoder: unknown or disabled model %q", key)
+	return qoder.ModelInfo{}, fmt.Errorf("%s: unknown or disabled model %q", qoder.SiteOf(agent).Name, key)
 }
 
-func qoderProvider(l sideLogin) Provider {
+func qoderProvider(agent string, l sideLogin) Provider {
 	user := l.User
-	a := &Account{Agent: "qoder", User: user, Plan: l.Plan, Stream: true}
+	site := qoder.SiteOf(agent)
+	a := &Account{Agent: agent, User: user, Plan: l.Plan, Stream: true}
 	a.models = func() []catalog.Model {
 		loginsMu.Lock()
 		defer loginsMu.Unlock()
 		for _, l := range readLogins() {
-			if l.Agent == "qoder" && strings.EqualFold(l.User, user) {
+			if l.Agent == agent && strings.EqualFold(l.User, user) {
 				c, _ := qoderSaved(l)
-				ms, _ := qoder.ParseModels(c.Models)
+				ms, _ := qoder.ParseModels(c.Models, agent)
 				return ms
 			}
 		}
 		return nil
 	}
-	a.fetch = func(ctx context.Context) ([]catalog.Model, error) { return qoderFetchModels(ctx, user) }
-	return Provider{ID: "qoder", Name: "Qoder", Icon: "qoder", Website: "https://qoder.com", Account: a}
+	a.fetch = func(ctx context.Context) ([]catalog.Model, error) { return qoderFetchModels(ctx, agent, user) }
+	return Provider{ID: agent, Name: site.Name, Icon: "qoder", Website: site.Web, Account: a}
 }
 
-func qoderAccount() (Provider, bool) {
-	ls := qoderLogins()
+func qoderAccount() (Provider, bool) { return qoderAccountOf(qoder.ProviderKey) }
+
+func qoderAccountOf(agent string) (Provider, bool) {
+	ls := qoderLoginsOf(agent)
 	if len(ls) == 0 {
 		return Provider{}, false
 	}
-	return qoderProvider(ls[0]), true
+	return qoderProvider(agent, ls[0]), true
 }
 
-func qoderAlsoOn() []Provider {
+func qoderAlsoOn(agent string) []Provider {
 	var out []Provider
-	for _, l := range qoderLogins() {
+	for _, l := range qoderLoginsOf(agent) {
 		if !l.Active && l.On {
-			out = append(out, qoderProvider(l))
+			out = append(out, qoderProvider(agent, l))
 		}
 	}
 	return out
 }
 
-func forgetQoderLogin(user string) error {
-	if err := migrateQoder(); err != nil {
-		return err
+func forgetQoderLogin(agent, user string) error {
+	if agent == qoder.ProviderKey {
+		if err := migrateQoder(); err != nil {
+			return err
+		}
 	}
 	qoderMu.Lock()
 	defer qoderMu.Unlock()
-	err := editSideLogin("qoder", user, func(ls []savedLogin, i int) ([]savedLogin, error) {
+	err := editSideLogin(agent, user, func(ls []savedLogin, i int) ([]savedLogin, error) {
 		return append(ls[:i], ls[i+1:]...), nil
 	})
 	if err == nil {
-		delete(qoderPending, qoderPendingKey(user))
+		delete(qoderPending, qoderPendingKey(agent, user))
 		forgetAccountCaches()
 	}
 	return err
@@ -404,8 +450,11 @@ type qoderFlow struct {
 
 const qoderSignInTimeout = 15 * time.Minute
 
-func QoderAuthURL() (url string, flow *qoderFlow, err error) {
-	f := qoder.NewDeviceFlow(qoderClient)
+// QoderAuthURL starts a sign-in on the global site.
+func QoderAuthURL() (url string, flow *qoderFlow, err error) { return qoderAuthURL(qoder.Global) }
+
+func qoderAuthURL(site *qoder.Site) (url string, flow *qoderFlow, err error) {
+	f := qoder.NewDeviceFlow(qoderClient, site)
 	url, verifier, nonce, err := f.Authorization()
 	if err != nil {
 		return "", nil, err
@@ -416,23 +465,39 @@ func QoderAuthURL() (url string, flow *qoderFlow, err error) {
 func QoderCompleteSignIn(ctx context.Context, fl *qoderFlow) (user string, err error) {
 	ctx, cancel := context.WithDeadline(ctx, fl.deadline)
 	defer cancel()
+	site := fl.client.Site()
 	dt, err := fl.client.PollDeviceToken(ctx, fl.nonce, fl.verifier, 2*time.Second)
 	if err != nil {
 		return "", err
 	}
+	cred := qoder.Credential{UID: dt.UserID, DeviceToken: dt.Token, DeviceRefresh: dt.RefreshToken,
+		MachineID: fl.client.MachineID()}
+	if site != qoder.Global {
+		cred.Site = site.ID
+	}
 	jt, err := fl.client.JobToken(ctx, dt.Token)
-	if err != nil {
+	var refused *qoder.JobTokenHTTPError
+	switch {
+	case err == nil:
+		life := jt.Expiry()
+		if life <= 0 {
+			life = 24 * time.Hour
+		}
+		cred.Token, cred.RefreshToken, cred.ExpiresAt = jt.Token, jt.RefreshToken, time.Now().Add(life).UnixMilli()
+	case site == qoder.CN && errors.As(err, &refused) && refused.StatusCode/100 == 4:
+		// Qoder CN's CLI never makes a job token: its device token is what
+		// signs the model calls. If qoder.cn won't make one for the CLI's
+		// client id, the account works the CLI's way.
+		cred.Token, cred.RefreshToken, cred.DeviceChat = dt.Token, dt.RefreshToken, true
+		cred.ExpiresAt = qoder.DeviceExpiry(*dt).UnixMilli()
+	default:
 		return "", err
 	}
-	life := jt.Expiry()
-	if life <= 0 {
-		life = 24 * time.Hour
-	}
-	cred := qoder.Credential{UID: dt.UserID, Token: jt.Token, RefreshToken: jt.RefreshToken,
-		DeviceToken: dt.Token, DeviceRefresh: dt.RefreshToken, MachineID: fl.client.MachineID(),
-		ExpiresAt: time.Now().Add(life).UnixMilli()}
-	if ui, err := qoder.FetchUserInfo(ctx, qoderClient, dt.Token); err == nil && ui != nil {
+	if ui, err := qoder.FetchUserInfo(ctx, qoderClient, site, dt.Token); err == nil && ui != nil {
 		cred.Email, cred.Name = ui.Email, ui.Name
+	}
+	if cred.Name == "" {
+		cred.Name = dt.UserName
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -440,15 +505,15 @@ func QoderCompleteSignIn(ctx context.Context, fl *qoderFlow) (user string, err e
 	if err := qoderSave(cred); err != nil {
 		return "", err
 	}
-	_, _ = qoderFetchModels(ctx, qoderWho(cred))
+	_, _ = qoderFetchModels(ctx, site.ID, qoderWho(cred))
 	forgetAccountCaches()
 	return qoderWho(cred), nil
 }
 
-func startQoderSignIn(s *signInFlow) error {
-	authURL, fl, err := QoderAuthURL()
+func startQoderSignIn(s *signInFlow, site *qoder.Site) error {
+	authURL, fl, err := qoderAuthURL(site)
 	if err != nil {
-		return fmt.Errorf("Qoder sign-in: %w", err)
+		return fmt.Errorf("%s sign-in: %w", site.Name, err)
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), fl.deadline)
 	s.mu.Lock()
@@ -458,10 +523,10 @@ func startQoderSignIn(s *signInFlow) error {
 		defer cancel()
 		user, err := QoderCompleteSignIn(ctx, fl)
 		if err != nil {
-			s.finish(SignInState{State: "failed", Error: "Qoder: " + err.Error()})
+			s.finish(SignInState{State: "failed", Error: site.Name + ": " + err.Error()})
 			return
 		}
-		ls := qoderLogins()
+		ls := qoderLoginsOf(site.ID)
 		s.finish(SignInState{State: "done", User: user, Using: strings.EqualFold(activeOf(ls), user)})
 	}()
 	return nil

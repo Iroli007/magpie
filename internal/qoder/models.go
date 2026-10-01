@@ -153,8 +153,9 @@ func sanitize(body []byte) string {
 // ParseModels decodes the listing and returns the enabled, routable chat
 // models as magpie's catalog entries. Placeholder ids ("auto", "default")
 // are dropped: they route between models inside Qoder and aren't a single
-// model an agent can pick.
-func ParseModels(body []byte) ([]catalog.Model, error) {
+// model an agent can pick. provider is the magpie provider id the entries are
+// listed under (ProviderKey or CNProviderKey).
+func ParseModels(body []byte, provider string) ([]catalog.Model, error) {
 	models, err := ModelConfigs(body)
 	if err != nil {
 		return nil, err
@@ -165,7 +166,7 @@ func ParseModels(body []byte) ([]catalog.Model, error) {
 		if name == "" {
 			name = m.Key
 		}
-		out = append(out, catalog.Model{ID: m.Key, Name: name, Provider: ProviderKey,
+		out = append(out, catalog.Model{ID: m.Key, Name: name, Provider: provider,
 			Context: m.MaxInputTokens, Images: m.IsVL, Efforts: m.Efforts, Free: m.Free})
 	}
 	return out, nil

@@ -16,12 +16,12 @@ func init() {
 	for _, w := range []*wbSite{wbCN, wbAI} {
 		movers[w.id] = &mover{
 			pkg:    "@magpie-community/opencode-workbuddy-auth",
-			min:    "0.1.1", // the desktop app's account read where the app keeps it
+			min:    "0.1.5", // a failure's status and its sign-in mark as the built-in's
 			agents: []string{w.id},
 			out: func() ([]Moving, error) {
 				var out []Moving
 				for _, a := range wbLogins(w) {
-					m := Moving{User: a.User, First: a.Active, On: a.On, Lapsed: a.Lapsed != "", Own: a.own}
+					m := Moving{User: a.User, First: a.Active, On: a.On, Lapsed: a.Lapsed != "", Own: a.own, Plan: a.Plan}
 					if a.own {
 						m.Auth = map[string]any{"type": "oauth", "source": "desktop", "access": "", "refresh": "", "expires": 0,
 							"accountId": a.User, "uid": a.creds.UID}

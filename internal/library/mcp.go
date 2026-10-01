@@ -16,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/imagemcp"
 )
 
 // Server is one MCP server: a command magpie's agents start, or a URL they
@@ -259,6 +260,51 @@ func (o ordered) MarshalYAML() (any, error) {
 	return n, nil
 }
 
+// selfTimeout is the seconds an agent waits for a tool of s: what
+// magpie-image's video tool needs, else def.
+func selfTimeout(s *Server, def int) int {
+	if s.Name == selfServerName && s.Command != "" {
+		return int(imagemcp.ToolTimeout().Seconds())
+	}
+	return def
+}
+
+// gooseOldTimeout is the timeout magpie wrote for every Goose server before
+// magpie-image was given a longer one.
+const gooseOldTimeout = 300
+
+// behind says whether an entry magpie wrote before lacks the timeout it
+// gives s now: Codex's tool_timeout_sec is missing, or Goose's timeout is
+// still the gooseOldTimeout every server had. A value the user chose is
+// neither, so it is left as it is.
+func (f *mcpFile) behind(s *Server, old map[string]any) bool {
+	if selfTimeout(s, 0) == 0 {
+		return false
+	}
+	switch f.Format {
+	case fmtCodex:
+		_, ok := old["tool_timeout_sec"]
+		return !ok
+	case fmtGoose:
+		return isNumber(old["timeout"], gooseOldTimeout)
+	}
+	return false
+}
+
+func isNumber(v any, n float64) bool {
+	switch x := v.(type) {
+	case int:
+		return float64(x) == n
+	case int64:
+		return float64(x) == n
+	case uint64:
+		return float64(x) == n
+	case float64:
+		return x == n
+	}
+	return false
+}
+
 // encode is the server as this agent writes it.
 func (f *mcpFile) encode(s *Server) ordered {
 	var o ordered
@@ -341,7 +387,7 @@ func (f *mcpFile) encode(s *Server) ordered {
 			add("args", list(s.Args))
 			optional("envs", s.Env)
 		}
-		add("timeout", 300)
+		add("timeout", selfTimeout(s, 300))
 	case fmtPi:
 		// pi-mcp-extension reads the transport from "transport",
 		// pi-mcp-adapter from "httpTransport"; each ignores the other's
@@ -471,6 +517,10 @@ func (f *mcpFile) encode(s *Server) ordered {
 			add("command", s.Command)
 			add("args", list(s.Args))
 			optional("env", s.Env)
+		}
+		// Codex gives a tool a minute unless its entry says more
+		if t := selfTimeout(s, 0); t > 0 {
+			add("tool_timeout_sec", t)
 		}
 	case fmtDsh:
 		add("serverName", s.Name)
@@ -799,8 +849,9 @@ var owned = map[mcpFormat][]string{
 func (f *mcpFile) merged(s *Server, old map[string]any) ordered {
 	o := f.encode(s)
 	mine := owned[f.Format]
+	behind := f.behind(s, old)
 	for i, e := range o {
-		if v, ok := old[e.k]; ok && !slices.Contains(mine, e.k) {
+		if v, ok := old[e.k]; ok && !slices.Contains(mine, e.k) && !(behind && f.Format == fmtGoose && e.k == "timeout") {
 			o[i].v = v
 		}
 	}

@@ -50,6 +50,8 @@ type providerJSON struct {
 	Website   string            `json:"website"`
 	KeysURL   string            `json:"keysUrl"`
 	Headers   map[string]string `json:"headers,omitempty"`
+	// the vendor searches the web by itself (provider.Searches)
+	Searches bool `json:"searches"`
 	// the proxy its requests go through: "" the global one, "direct"
 	// none, or an address (#237)
 	Proxy string `json:"proxy"`
@@ -90,7 +92,7 @@ type providerJSON struct {
 	Unlisted  bool               `json:"unlisted"`           // its models serve only through routing groups
 	Off       bool               `json:"off"`                // switched off: kept, but agents get none of its models
 	Contexts  map[string]int     `json:"contexts,omitempty"` // the windows the user set, "*" for all its models
-	Fetched   string             `json:"fetched"`            // "3h ago" when the list came from the vendor
+	Fetched   *time.Time         `json:"fetched,omitempty"`  // when the list came from the vendor; the page says how long ago in its language
 	Agents    []providerAgent    `json:"agents"`             // detected agents, current ones flagged
 	Sponsored bool               `json:"sponsored"`
 	KeyList   []provider.KeyInfo `json:"keyList"`           // its keys, in the order requests try them
@@ -105,6 +107,8 @@ type moveJSON struct {
 	// State is "" (built-in, never moved), "plugin", "back" or "failed"
 	State string `json:"state"`
 	Error string `json:"error,omitempty"`
+	// Why is a failed move's reason, which the page says in its language
+	Why *provider.MoveWhy `json:"why,omitempty"`
 }
 
 // stepPlanJSON: whether a StepFun provider's platform sign-in is kept, and
@@ -225,7 +229,7 @@ func providerInfo(p provider.Provider, agents []agentUse) providerJSON {
 		ID: p.ID, Name: p.Name, Icon: p.Icon, Preset: p.Preset, Host: p.Host(),
 		Chat: p.Chat, Responses: p.Responses, Anthropic: p.Anthropic, Decide: p.Decide,
 		Catalog: p.Catalog, Website: p.Website, KeysURL: p.KeysURL,
-		Proxy: p.Proxy, AccountProxies: p.AccountProxies, Headers: p.Headers, BalanceURL: p.BalanceURL, BalancePath: p.BalancePath, ModelsURL: p.ModelsURL,
+		Proxy: p.Proxy, AccountProxies: p.AccountProxies, Headers: p.Headers, Searches: p.Searches, BalanceURL: p.BalanceURL, BalancePath: p.BalancePath, ModelsURL: p.ModelsURL,
 		Ready: p.Ready(), Chosen: p.Models, Models: []modelJSON{}, Agents: []providerAgent{},
 		Fallback: p.Fallback, Routing: p.Routing, Affinity: p.Affinity, Unlisted: p.Unlisted, Off: p.Off, Contexts: p.Contexts,
 	}
@@ -253,7 +257,7 @@ func providerInfo(p provider.Provider, agents []agentUse) providerJSON {
 	out.Key.Masked = provider.Mask(p.Key)
 	if provider.Movable(p.ID) {
 		m, _ := provider.MigrationOf(p.ID)
-		out.Move = &moveJSON{Package: provider.MovePackage(p.ID), State: m.State, Error: m.Err}
+		out.Move = &moveJSON{Package: provider.MovePackage(p.ID), State: m.State, Error: m.Err, Why: m.Why}
 		if m.State == provider.MoveMoving {
 			out.Move.State = ""
 		}
@@ -294,7 +298,7 @@ func providerInfo(p provider.Provider, agents []agentUse) providerJSON {
 		if pp, ok := provider.PluginOf(p.ID); ok && p.IsPlugin() {
 			// a plugin's sign-in: named for the provider it signs in to,
 			// the page following it by the provider's id
-			out.Account.Agent, out.Account.Name, out.Account.Icon = p.ID, pp.Name, pluginIcon(pp.Spec, pp.ID)
+			out.Account.Agent, out.Account.Name, out.Account.Icon = p.ID, pp.Name, pluginIcon(pp)
 			if provider.Moved(pp.ID) {
 				out.Account.Icon = p.Icon // the built-in's, as it was
 			}
@@ -356,8 +360,8 @@ func providerInfo(p provider.Provider, agents []agentUse) providerJSON {
 		out.DrawIDs = append(out.DrawIDs, m.ID)
 	}
 	out.Draws = len(out.DrawIDs)
-	if t, ok := p.Fetched(); ok {
-		out.Fetched = ago(t)
+	if t, ok := p.Listed(); ok {
+		out.Fetched = &t
 	}
 	for _, a := range agents {
 		pa := providerAgent{ID: a.ID, Name: a.Name, Icon: a.Icon, Current: a.pid == p.ID, Model: a.model}
@@ -427,18 +431,26 @@ func providersState() providersJSON {
 	return s
 }
 
-func ago(t time.Time) string {
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Round(time.Minute).Minutes()))
-	case d < 48*time.Hour:
-		return fmt.Sprintf("%dh ago", int(d.Round(time.Hour).Hours()))
-	default:
-		return t.Format("Jan 2")
-	}
+// failMove is fail with why the move failed, for the page to say it in
+// its reader's language.
+func failMove(rw http.ResponseWriter, err error) {
+	rw.Header().Set("Content-Type", "application/json")
+	rw.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(rw).Encode(map[string]any{"error": err.Error(), "why": provider.WhyOf(err)})
+}
+
+// moveProvider and moveBackProvider are provider.Move and MoveBack, for
+// tests to stand in for.
+var (
+	moveProvider     = provider.Move
+	moveBackProvider = provider.MoveBack
+)
+
+// moveContext keeps a move going though the page that asked for it goes
+// (closed, reloaded): stopped halfway, a move leaves accounts in neither
+// place until it is run again.
+func moveContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
 }
 
 func providerRoutes(mux *http.ServeMux, w Windows) {
@@ -550,12 +562,16 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			}
 		case "move":
 			// a built-in subscription's accounts onto its community plugin
-			if err := provider.Move(r.Context(), in.ID); err != nil {
-				fail(rw, err)
+			ctx, cancel := moveContext(r)
+			defer cancel()
+			if err := moveProvider(ctx, in.ID); err != nil {
+				failMove(rw, err)
 				return
 			}
 		case "moveback":
-			if err := provider.MoveBack(r.Context(), in.ID); err != nil {
+			ctx, cancel := moveContext(r)
+			defer cancel()
+			if err := moveBackProvider(ctx, in.ID); err != nil {
 				fail(rw, err)
 				return
 			}
@@ -571,6 +587,7 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			if pr, err := provider.FromPreset(in.Preset); err == nil && in.Chat == "" && in.Responses == "" && in.Anthropic == "" {
 				pr.Key, pr.Models, pr.Fallback, pr.Headers, pr.BalanceToken, pr.Contexts = in.Key, in.Models, in.Fallback, in.Headers, in.BalanceToken, in.Contexts
 				pr.ZhipuTeam = in.ZhipuTeam
+				pr.Searches = in.Searches
 				if in.Name != "" {
 					pr.Name = in.Name
 				}

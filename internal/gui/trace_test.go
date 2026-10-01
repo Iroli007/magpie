@@ -50,7 +50,7 @@ func TestRouteLookup(t *testing.T) {
 		code int
 	}{{"123", 200}, {"124", 404}, {"", 400}, {"-1", 400}, {"../123", 400}} {
 		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/gateway/route?id="+url.QueryEscape(c.id), nil))
+		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/gateway/route?id="+url.QueryEscape(c.id)+"&day=2026-09-30", nil))
 		if w.Code != c.code {
 			t.Fatalf("id %q: %d %s", c.id, w.Code, w.Body)
 		}
@@ -61,4 +61,12 @@ func TestRouteLookup(t *testing.T) {
 			}
 		}
 	}
+	for _, day := range []string{"", "../2026-09-30", "2026-02-30"} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/gateway/route?id=123&day="+url.QueryEscape(day), nil))
+		if w.Code != 400 {
+			t.Fatalf("invalid day %q: %d", day, w.Code)
+		}
+	}
+
 }

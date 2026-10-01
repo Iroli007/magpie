@@ -100,6 +100,11 @@ func TestMoveDevin(t *testing.T) {
 	exe := filepath.Join(home, "devin")
 	os.WriteFile(exe, []byte("#!/bin/sh\n"+devinSigned+"\n"), 0o755)
 	fakeDevin(t, exe)
+	// the CLI's account is read by running it, which a loaded machine may
+	// take longer than a look's first wait for
+	old := firstAsk
+	firstAsk = time.Minute
+	t.Cleanup(func() { firstAsk = old })
 	two, _ := newDevinHome()
 	os.WriteFile(devinCredentialsAt(two), devinCredentials("key-two", "https://eu.codeium.com", "", ""), 0o600)
 	writeLogins([]savedLogin{{Agent: "devin", User: "two@example.com", Plan: "Devin Max", Home: two, On: true, First: true}})

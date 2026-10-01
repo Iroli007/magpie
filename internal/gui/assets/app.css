@@ -224,6 +224,19 @@ body.panel .seg { display: none; }
 .update:hover { background: var(--accent); color: var(--accent-fg); }
 .update:active { transform: scale(.96); }
 .update.busy { pointer-events: none; opacity: .6; }
+/* its × on the pill's corner, shown while the pointer is over it: hides
+   the pill until a newer version is out */
+.update-wrap { position: relative; align-self: center; display: inline-flex; }
+.update-hide {
+  position: absolute; top: -5px; right: 3px; width: 14px; height: 14px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--muted); background: var(--card); box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgba(0,0,0,.12);
+  opacity: 0; pointer-events: none; transition: opacity .12s, color .12s;
+}
+.update-wrap:hover .update-hide { opacity: 1; pointer-events: auto; }
+.update-hide:focus-visible { opacity: 1; pointer-events: auto; } /* its own rule: Safari before 15.4 drops a list holding it */
+.update-hide:hover { color: var(--fg); }
+.update[hidden] + .update-hide, .update.busy + .update-hide { display: none; }
 /* a narrow header (fitTop): the magpie without its name, Update as its arrow,
    and at the narrowest the tabs in the row rather than over it */
 .top.tight .brand > span:not(.logo), .top.tight .update span { display: none; }
@@ -473,6 +486,10 @@ body.window .field.solo { grid-column: auto; }
 .reset-ask .reset-idle { color: var(--amber); }
 .quota-balance { display: flex; align-items: baseline; gap: 6px; font-size: 10.5px; color: var(--muted); }
 .quota-windows + .quota-balance { margin-top: 9px; }
+/* "Every model" at the end of the account's line, above its families */
+.text.quota-every { flex: none; margin: -2px -7px -2px 0; padding: 1px 7px; font-size: 10.5px; }
+.subscription-account .plan + .quota-every, .subscription-head .plan + .quota-every { margin-left: 4px; }
+.subscription-account .user + .quota-every, .subscription-head .quota-every { margin-left: auto; }
 .quota-balance b { margin-left: auto; font-size: 15px; color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
 .skeleton { display: block; border-radius: 5px; background: linear-gradient(90deg, var(--skel, var(--pill)) 25%, var(--skel-hi, var(--pill-hover)) 45%, var(--skel, var(--pill)) 65%); background-size: 240% 100%; animation: skeleton-shift 1.4s ease-in-out infinite; }
 @keyframes skeleton-shift { from { background-position: 100% 0; } to { background-position: -100% 0; } }
@@ -545,6 +562,11 @@ body.window .field.solo { grid-column: auto; }
 .led .muted { color: var(--muted); }
 .led .when { color: var(--muted); }
 .led .when .text { padding: 0; font: inherit; }
+.led .when .led-route-link { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+.led .when .led-route-link:hover { text-decoration-style: solid; }
+#ledRoute { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+#ledRoute[hidden] { display: none; }
+#ledRouteClear { font-size: 18px; padding: 2px 6px; }
 .led .model, .led .where { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 .led .where { color: var(--fg-2); }
 .led .cost { color: var(--green); }
@@ -1188,6 +1210,17 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .call-body code { display: block; font: 10.5px/1.5 var(--code); color: var(--fg-2); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; tab-size: 2; }
 .call-body code.empty { color: var(--faint); font-family: var(--font); }
 @media (max-width: 760px) { .call-details { grid-template-columns: 1fr; } }
+/* a streamed reply: read as its reply, its events or as it came */
+.call-body-count { font-size: 9.5px; color: var(--faint); white-space: nowrap; }
+.call-body-head .sse-views { align-self: center; padding: 1.5px; border-radius: 6px; }
+.call-body-head .sse-views .opt { height: 19px; padding: 0 8px; font-size: 10.5px; }
+.call-body-head .sse-views .thumb { top: 1.5px; bottom: 1.5px; }
+.sse-ev { display: block; }
+.sse-ev + .sse-ev { margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--line-2); }
+.sse-name { color: var(--muted); }
+.call-body-foot { height: 27px; padding: 0 6px 0 10px; display: flex; align-items: center; gap: 7px; border-top: 1px solid var(--line-2); font-size: 10.5px; color: var(--muted); }
+.call-body-foot[hidden] { display: none; }
+.call-body-foot .link { font-size: 11px; }
 
 /* ---- providers page ------------------------------------------------------- */
 .provider .chev { color: var(--faint); display: inline-flex; transition: transform .15s; }
@@ -1356,6 +1389,10 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 /* the Providers page's add button stays at the view's foot over a long list */
 #view-providers .after-list { position: sticky; bottom: -8px; z-index: 2; margin: 0 -12px -8px; padding: 14px 16px 12px; background: linear-gradient(to bottom, transparent, var(--bg) 12px); transition: opacity .18s ease, visibility .18s; }
 #view-providers .after-list.away { opacity: 0; visibility: hidden; }
+#movable { margin: 0 0 8px; }
+.movable { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 4px; padding: 2px 14px; font-size: 11.5px; line-height: 1.6; color: var(--muted); }
+.movable .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; margin-right: 4px; align-self: center; }
+.movable .link { font-size: 11.5px; padding: 0 2px; }
 .excluded { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px 2px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
 .excluded .ic { width: 16px; height: 16px; margin-top: 1px; opacity: .7; }
 .excluded b { font-weight: 500; color: var(--fg-2); }
@@ -1450,7 +1487,9 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .editor .stack { display: flex; flex-direction: column; gap: 6px; }
 .editor .move { align-items: flex-start; font-size: 12px; line-height: 1.5; padding-top: 4px; }
 .editor .move .hint { margin-top: 0; }
-.editor .move > button { padding-left: 0; padding-right: 0; }
+.editor .move .move-why { font-size: 11.5px; line-height: 1.45; color: var(--red); overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+.editor .move .move-why[hidden] { display: none; }
+.editor .move > button { max-width: 100%; white-space: normal; text-align: left; height: auto; min-height: 27px; }
 .editor .headers { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .editor .headers .pair { width: 100%; }
 .editor .headers .hadds { display: flex; flex-wrap: wrap; gap: 2px 12px; }
@@ -1607,6 +1646,11 @@ input.words.rule-match { flex: 1 1 auto; width: auto; min-width: 0; }
 .warm-at input.at { width: auto; height: 27px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; font-size: 12.5px; font-variant-numeric: tabular-nums; outline: none; transition: border-color .12s, box-shadow .12s; }
 .warm-at input.at:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .warm-at input.at::-webkit-calendar-picker-indicator { opacity: .55; }
+/* a usage alert's share or amount: a short number field, its unit beside it */
+.warm-at input.at.num { width: 64px; text-align: right; }
+.warm-at .unit { color: var(--muted); font-size: 12.5px; margin-left: -4px; }
+.row.pref .sub .warn { color: var(--amber); }
+.row.pref .sub.wraps { white-space: normal; }
 /* the field's clock and picker in the page's own palette */
 :root[data-theme="dark"] .warm-at input.at { color-scheme: dark; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .warm-at input.at { color-scheme: dark; } }
@@ -1628,6 +1672,7 @@ input.words.rule-match { flex: 1 1 auto; width: auto; min-width: 0; }
 .lan-address-controls .lan-address-text { top: 16px; right: 40px; width: 240px; max-width: calc(100% - 40px); font: 12px var(--code); transition: top .28s var(--ease); }
 .lan-address-controls .segs { top: 12px; right: 286px; margin-left: 0; transition: right .28s var(--ease); }
 .lan-copy { top: 14px; right: 12px; display: inline-flex; transition: top .28s var(--ease); }
+.row.pref.lan-container .sub { white-space: normal; }
 .pop.proto-menu.lan-address-menu { width: min(320px, calc(100vw - 16px)); max-height: min(360px, 70vh); overflow-y: auto; }
 .lan-address-menu .pm-name { font: 12px var(--code); }
 @media (max-width: 600px) {

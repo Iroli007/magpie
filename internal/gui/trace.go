@@ -57,7 +57,12 @@ func traceRoutes(mux *http.ServeMux) {
 				}
 			}
 		}
-		if route, ok := gateway.HistoryRoute(id); ok {
+		day, err := time.Parse("2006-01-02", r.URL.Query().Get("day"))
+		if err != nil {
+			http.Error(rw, "invalid route day", http.StatusBadRequest)
+			return
+		}
+		if route, ok := gateway.HistoryRoute(id, day); ok {
 			writeJSON(rw, route)
 			return
 		}

@@ -86,7 +86,7 @@ func TestSignInInstallFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	st = waitPast(t, st.ID, "installing")
-	if st.State != "failed" || !strings.Contains(st.Error, "Error: Failed to download") || !strings.Contains(st.Error, "install.") {
+	if st.State != "failed" || !strings.Contains(st.Error, "Error: Failed to download") || !strings.Contains(st.Error, "install it yourself") {
 		t.Fatalf("state %+v", st)
 	}
 }

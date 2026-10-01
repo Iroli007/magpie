@@ -13,6 +13,7 @@ import (
 func TestGrokEffortListPrice(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	os.MkdirAll(filepath.Dir(catalog.CachePath()), 0o755)

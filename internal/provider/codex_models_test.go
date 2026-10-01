@@ -50,8 +50,10 @@ func TestCodexModelsOfTheAccount(t *testing.T) {
 // The models list is asked for with the newest Codex known: the CLI
 // installed over the version its cache was written with.
 func TestCodexVersion(t *testing.T) {
+	shellFakes(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	writeFile(t, filepath.Join(home, ".codex", "models_cache.json"), map[string]any{"client_version": "0.160.0"})
 	exe := filepath.Join(t.TempDir(), "codex")
 	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho codex-cli 0.161.1\n"), 0o755); err != nil {
@@ -86,6 +88,7 @@ func TestCodexVersion(t *testing.T) {
 // Codex's requests count, and never an older version.
 func TestCodexVersionSeen(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("CODEX_HOME", "")
 	old := codexExecutable
 	codexExecutable = func() string { return "" }
@@ -150,6 +153,7 @@ func TestCodexExecutableOffPath(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
 			t.Setenv("PATH", "/usr/bin:/bin")
 			os.WriteFile(filepath.Join(home, ".npmrc"), []byte("registry=https://registry.npmjs.org/\nprefix = ~/custom-npm\n"), 0o644)
 			exe := filepath.Join(home, dir, "codex")

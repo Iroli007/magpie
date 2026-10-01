@@ -381,14 +381,23 @@ type zhipuLimits struct {
 
 // windows are the limits as windows: what is used of the whole when both
 // are told (the whole less what remains, or the current value), else the
-// percentage the vendor gives.
+// percentage the vendor gives. TIME_LIMIT is the month's MCP tool calls,
+// which ZCode shows but never stops the models on, so it is set aside, as
+// is a limit whose whole is told as 0: no cap (an older plan's), which
+// the vendor may still give as 100% used.
 func (d zhipuLimits) windows() []QuotaWindow {
 	out := []QuotaWindow{}
 	for _, x := range d.Limits {
 		span := zcodeSpan(x.Unit, x.Number)
 		w := QuotaWindow{Name: zcodeWindowName(span), Span: span}
+		if strings.EqualFold(x.Type, "TIME_LIMIT") {
+			w.Name, w.Aside = "MCP · Month", true
+		}
 		if x.Percent != nil {
 			w.Used = *x.Percent
+		}
+		if x.Usage != nil && *x.Usage == 0 {
+			w.Used, w.Aside = 0, true
 		}
 		if x.Usage != nil && *x.Usage > 0 {
 			total := *x.Usage

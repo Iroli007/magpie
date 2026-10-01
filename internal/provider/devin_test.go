@@ -147,6 +147,7 @@ func TestDevinCredentialsPath(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 	got := DevinCredentialsPath()
 	if got != filepath.Join(home, "data", "devin", "credentials.toml") {
@@ -174,6 +175,9 @@ func TestDevinCredentials(t *testing.T) {
 }
 
 func TestDevinSignIn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake devin is a shell script")
+	}
 	home := claudeHome(t)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
 
@@ -242,6 +246,9 @@ func TestDevinSignIn(t *testing.T) {
 // own: it gets a home of magpie's, the CLI's file is left alone, and the
 // gateway can use either.
 func TestDevinSeveralAccounts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake devin is a shell script")
+	}
 	home := claudeHome(t)
 	data := filepath.Join(home, "data")
 	t.Setenv("XDG_DATA_HOME", data)
@@ -360,8 +367,18 @@ const devinUnreachable = `printf '%s\n' 'Logged in (via Devin).' '' 'User / team
 // the CLI and the identity back when it ends: an ask that couldn't tell now
 // leaves the last account served, so a test after this one must not find
 // either.
+// shellFakes skips a test whose fake CLI is a shell script, which Windows
+// can't run.
+func shellFakes(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake CLI is a shell script")
+	}
+}
+
 func fakeDevin(t *testing.T, exe string) {
 	t.Helper()
+	shellFakes(t)
 	old := DevinExecutable
 	DevinExecutable = func() string { return exe }
 	t.Cleanup(func() {

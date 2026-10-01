@@ -24,9 +24,11 @@ func TestCommandCodeGoPlan(t *testing.T) {
 		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		ok := func(v any) { _ = json.NewEncoder(w).Encode(v) }
 		switch {
-		case r.URL.Path == "/provider/v1/models":
-			t.Errorf("the Provider API asked for %q's models", key)
+		case r.URL.Path == "/provider/v1/models" && r.Header.Get("Authorization") != "":
+			t.Errorf("the Provider API asked for %q's models with its key", key)
 			w.WriteHeader(403)
+		case r.URL.Path == "/provider/v1/models":
+			ok(map[string]any{"data": []map[string]any{{"id": "gpt-6-luna"}, {"id": "claude-opus-5-5"}, {"id": "moonshotai/Kimi-K3"}}})
 		case r.URL.Path != "/alpha/billing/subscriptions":
 			w.WriteHeader(404)
 		case key == "go-key":
@@ -59,7 +61,7 @@ func TestCommandCodeGoPlan(t *testing.T) {
 		t.Fatalf("go: %v %q %q", ok, api, key)
 	}
 	ms, err := p.Account.fetch(ctx)
-	if err != nil || len(ms) != len(cmdGoModels) || ms[0].ID != "gpt-6-luna" {
+	if err != nil || len(ms) != 2 || ms[0].ID != "gpt-6-luna" || ms[1].ID != "moonshotai/Kimi-K3" {
 		t.Fatalf("go models: %v %+v", err, ms)
 	}
 	if got := p.Account.models(); len(got) != len(cmdGoModels) {

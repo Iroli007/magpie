@@ -577,3 +577,6 @@ func (c *counter) Read(p []byte) (int, error) {
 	c.report(c.done, c.total)
 	return n, err
 }
+
+// Alive reports whether the process pid is still running.
+func Alive(pid int) bool { return alive(pid) }

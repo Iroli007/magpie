@@ -73,10 +73,14 @@ type Account struct {
 	// the model it picks for the account (copilot_auto.go).
 	auto func(ctx context.Context) (copilotAutoSession, error)
 
-	// retry is asked about a refusal the backend answered: true when the
-	// account has put right what it names and the request is worth
-	// sending once more (a Factory org the server can't reach, factory.go).
-	retry func(ctx context.Context, status int, body []byte) bool
+	// retry is asked about a refusal the backend answered to a request for
+	// model: true when the account has put right what it names and the
+	// request is worth sending once more (a Factory org the server can't
+	// reach, factory.go; another model for Copilot's Auto, copilot_refused.go).
+	retry func(ctx context.Context, model string, status int, body []byte) bool
+	// unusable is set on a Copilot account: whether a model its list offers
+	// is one the account was refused (copilot_refused.go).
+	unusable func(model string) bool
 	// explain adds what the user can do about a refusal the account's
 	// backend answered, "" when there is nothing to add (factory.go).
 	explain func(status int, body []byte) string
@@ -85,6 +89,10 @@ type Account struct {
 	// carries its requests: the plugin's fetch.
 	plugin    *plugin.Provider
 	pluginKey string // the account's key in plugin-auth.json
+	// wasHost is the built-in's API host, for a moved one's to show as it
+	// did; moved says there is one to show ("" too: Zed's had none).
+	wasHost   string
+	moved     bool
 	transport func(req *http.Request) (*http.Response, error)
 }
 
@@ -166,13 +174,13 @@ func (p Provider) Sign(ctx context.Context, req *http.Request, proto Protocol, b
 // refusal's body is worth reading before it is passed on.
 func (p Provider) Retries() bool { return p.Account != nil && p.Account.retry != nil }
 
-// Retry is whether a request the backend refused with status and body is
-// worth sending once more, the account having mended what it named.
-func (p Provider) Retry(ctx context.Context, status int, body []byte) bool {
+// Retry is whether a request (sent) the backend refused with status and
+// body is worth sending once more, the account having mended what it named.
+func (p Provider) Retry(ctx context.Context, sent []byte, status int, body []byte) bool {
 	if p.Account == nil || p.Account.retry == nil {
 		return false
 	}
-	return p.Account.retry(p.Via(ctx), status, body)
+	return p.Account.retry(p.Via(ctx), bodyModel(sent), status, body)
 }
 
 // Explain is the error a refusal is passed on as: msg, with what the
@@ -222,20 +230,7 @@ func Excluded() []Exclusion {
 	return append(out, savedButSignedOut()...)
 }
 
-const (
-	claudeClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	// These values mirror the genuine Claude Code release used by Alma. The
-	// installed CLI version wins when it is newer, keeping UA and cc_version in
-	// lockstep as Claude's model gates require.
-	claudeVersionFloor           = "2.1.280"
-	claudeSDKVersion             = "0.112.1"
-	claudeRuntimeVersion         = "v22.13.0"
-	claudeFingerprintSalt        = "59cf53e54c78"
-	claudeCCHSeed         uint64 = 0x6e52736ac806831e
-)
-
-var claudeHaikuBetas = "oauth-2025-04-20,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,claude-code-20250219"
-var claudeDefaultBetas = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24"
+const claudeClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 // claudeBase is Anthropic's API root. A var so tests can point it elsewhere.
 var claudeBase = "https://api.anthropic.com"
@@ -602,24 +597,10 @@ func claudeAccount() (Provider, bool) {
 		}
 	}
 	acct := &Account{Agent: "claude", User: user, Plan: plan}
-	acct.sign = func(ctx context.Context, req *http.Request, body []byte) error {
-		tok, err := claudeToken(ctx)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", "Bearer "+tok)
-		req.Header.Set("User-Agent", claudeUserAgent())
-		req.Header.Set("X-Claude-Code-Session-Id", claudeSessionID())
-		req.Header.Set("anthropic-beta", claudeBetaHeader(claudeModelOf(body)))
-		req.Header.Set("anthropic-dangerous-direct-browser-access", "true")
-		req.Header.Set("x-app", "cli")
-		req.Header.Set("x-client-request-id", randomUUID())
-		for k, v := range claudeStainlessHeaders() {
-			req.Header.Set(k, v)
-		}
-		return nil
-	}
-	acct.body = claudeBody
+	// nothing is sent to Anthropic in Claude Code's name: a request on the
+	// account runs Claude Code itself (the gateway's bridge, a test), so
+	// one that would go straight to the API with its sign-in is refused
+	acct.sign = func(context.Context, *http.Request, []byte) error { return errClaudeViaCLI }
 	acct.models = func() []catalog.Model { return catalog.Provider("anthropic") }
 	acct.fetch = func(ctx context.Context) ([]catalog.Model, error) {
 		ms, err := claudeModels(ctx)
@@ -654,9 +635,9 @@ func claudeModels(ctx context.Context) ([]catalog.Model, error) {
 		}
 		req.Header.Set("Authorization", "Bearer "+tok)
 		req.Header.Set("anthropic-version", "2023-06-01")
-		req.Header.Set("anthropic-beta", claudeBetaHeader(""))
+		req.Header.Set("anthropic-beta", "oauth-2025-04-20")
 		req.Header.Set("Accept", "application/json")
-		req.Header.Set("User-Agent", claudeUserAgent())
+		req.Header.Set("User-Agent", "magpie")
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return nil, errors.New("Claude model list: " + err.Error())
@@ -826,8 +807,10 @@ func Accounts() []Provider {
 	if p, ok := commandCodeAccount(); ok {
 		out = append(out, p)
 	}
-	if p, ok := qoderAccount(); ok {
-		out = append(out, p)
+	for _, agent := range qoderAgents {
+		if p, ok := qoderAccountOf(agent); ok {
+			out = append(out, p)
+		}
 	}
 	if p, ok := zedAccount(); ok {
 		out = append(out, p)
@@ -845,7 +828,37 @@ func Accounts() []Provider {
 	}
 	// a built-in moved onto its plugin is the plugin's now (migrate.go)
 	out = slices.DeleteFunc(out, func(p Provider) bool { return Moved(p.ID) })
-	return append(out, pluginAccounts()...)
+	return placeMoved(out, pluginAccounts())
+}
+
+// builtinOrder is the built-ins' ids in the order Accounts lists them.
+var builtinOrder = slices.Concat([]string{"claude", "codex", "copilot", "cursor", "grok", "devin", "kiro", "zcode",
+	"workbuddy", WorkBuddyAIID, CommandCodePlanID}, qoderAgents, []string{"zed", "factory", MiMoID, "gemini", "antigravity"})
+
+// placeMoved adds the plugins' accounts to the built-ins': one a built-in
+// was moved onto stands where the built-in stood, the others go last.
+func placeMoved(out, plugins []Provider) []Provider {
+	at := func(id string) int {
+		if i := slices.Index(builtinOrder, id); i >= 0 {
+			return i
+		}
+		return len(builtinOrder)
+	}
+	var rest []Provider
+	for _, p := range plugins {
+		if !Moved(p.ID) || !slices.Contains(builtinOrder, p.ID) {
+			rest = append(rest, p)
+			continue
+		}
+		// moved ones placed already count too: two moved in the plugins'
+		// order (WorkBuddy AI before WorkBuddy) keep the built-ins'
+		i := slices.IndexFunc(out, func(q Provider) bool { return at(q.ID) > at(p.ID) })
+		if i < 0 {
+			i = len(out)
+		}
+		out = slices.Insert(out, i, p)
+	}
+	return append(out, rest...)
 }
 
 func readJSON(path string, v any) bool {
@@ -1129,6 +1142,10 @@ func copilotProvider(app copilotApp, plan string) Provider {
 		}
 		return copilotAutoResolve(ctx, app, false)
 	}
+	acct.retry = func(ctx context.Context, model string, status int, body []byte) bool {
+		return copilotRefused(ctx, app, model, status, body)
+	}
+	acct.unusable = func(model string) bool { return copilotRefuses(app.Token, model) }
 	acct.fetch = func(ctx context.Context) ([]catalog.Model, error) {
 		ms, err := copilotModels(ctx, app)
 		if err != nil {
@@ -1238,7 +1255,7 @@ var copilotInternal = regexp.MustCompile(`^(copilot-search|exec-agent|trajectory
 var (
 	copilotTermsMu sync.Mutex
 	copilotTerms   = map[string]map[string]bool{} // by GitHub token: models whose terms wait
-	copilotPicks   = map[string][]string{}        // by GitHub token: models it may pick by hand, in the list's order
+	copilotPicks   = map[string][]string{}        // by GitHub token: models it may pick by hand, the likeliest served first
 )
 
 // copilotAccept enables model for the account when its terms still wait.
@@ -1313,12 +1330,17 @@ func copilotModels(ctx context.Context, app copilotApp) ([]catalog.Model, error)
 	b, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	var v struct {
 		Data []struct {
-			ID           string   `json:"id"`
-			Name         string   `json:"name"`
-			Vendor       string   `json:"vendor"`
-			Picker       bool     `json:"model_picker_enabled"`
-			Category     string   `json:"model_picker_category"`
-			Endpoints    []string `json:"supported_endpoints"`
+			ID        string   `json:"id"`
+			Name      string   `json:"name"`
+			Vendor    string   `json:"vendor"`
+			Picker    bool     `json:"model_picker_enabled"`
+			Category  string   `json:"model_picker_category"`
+			Default   bool     `json:"is_chat_default"`
+			Fallback  bool     `json:"is_chat_fallback"`
+			Endpoints []string `json:"supported_endpoints"`
+			Billing   *struct {
+				Premium bool `json:"is_premium"`
+			} `json:"billing"`
 			Capabilities struct {
 				Type     string `json:"type"`
 				Supports struct {
@@ -1336,6 +1358,7 @@ func copilotModels(ctx context.Context, app copilotApp) ([]catalog.Model, error)
 	}
 	var out []catalog.Model
 	var picks []string
+	rank := map[string]int{} // how early a pick stands in for Auto
 	waiting := map[string]bool{}
 	copilotSeenMu.Lock()
 	for _, m := range v.Data {
@@ -1355,6 +1378,20 @@ func copilotModels(ctx context.Context, app copilotApp) ([]catalog.Model, error)
 		switch {
 		case m.Policy != nil && m.Policy.State == "enabled", m.Policy == nil && m.Picker:
 			picks = append(picks, m.ID)
+			// Copilot's base model (VS Code's copilot-base: the list's
+			// is_chat_fallback), then its default, then one billed to no
+			// premium allowance: what a plan that may pick little (a
+			// Student's) is likeliest to be served
+			switch {
+			case m.Fallback:
+				rank[m.ID] = 0
+			case m.Default:
+				rank[m.ID] = 1
+			case m.Billing != nil && !m.Billing.Premium:
+				rank[m.ID] = 2
+			default:
+				rank[m.ID] = 3
+			}
 		case m.Policy != nil && m.Policy.Terms != "":
 			waiting[m.ID] = true
 		default:
@@ -1366,6 +1403,7 @@ func copilotModels(ctx context.Context, app copilotApp) ([]catalog.Model, error)
 	// it lists, and the only choice a Student plan has: an account whose
 	// list leaves it nothing to pick by hand still has it
 	out = append(out, copilotAutoModel)
+	slices.SortStableFunc(picks, func(a, b string) int { return rank[a] - rank[b] })
 	copilotTermsMu.Lock()
 	copilotTerms[app.Token] = waiting
 	copilotPicks[app.Token] = picks

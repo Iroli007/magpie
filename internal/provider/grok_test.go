@@ -34,9 +34,9 @@ func TestGrokSigns(t *testing.T) {
 		w.Write([]byte(`{"data":[{"id":"grok-4.7","api_backend":"responses"}]}`))
 	}))
 	defer up.Close()
-	base := grokBase
-	grokBase = up.URL
-	defer func() { grokBase = base }()
+	base := GrokBase
+	GrokBase = up.URL
+	defer func() { GrokBase = base }()
 	home := t.TempDir()
 	grokSignedIn(t, home, "me@x.ai")
 	acct := &Account{Agent: "grok"}
@@ -96,6 +96,24 @@ func TestGrokBodyLeavesOutCustomTools(t *testing.T) {
 	same := []byte(`{"tools":[{"type":"function","name":"x"}],"tool_choice":"auto"}`)
 	if string(grokBody(same)) != string(same) {
 		t.Fatal("a body Grok takes was changed")
+	}
+}
+
+// A tool_choice with no tools beside it goes: the backend turns the
+// request away over it, as it did Codex's compaction summary (#378).
+func TestGrokBodyDropsLoneToolChoice(t *testing.T) {
+	for _, in := range []string{
+		`{"model":"grok-4.7","reasoning":{"effort":"low"},"tool_choice":"auto","parallel_tool_calls":false,"input":[]}`,
+		`{"model":"grok-4.7","tool_choice":"auto"}`,
+		`{"model":"grok-4.7","tools":[{"type":"custom","name":"apply_patch"}],"tool_choice":"auto"}`,
+	} {
+		if got := string(grokBody([]byte(in))); strings.Contains(got, "tool_choice") {
+			t.Errorf("%s\n-> %s", in, got)
+		}
+	}
+	same := []byte(`{"tools":[{"type":"function","name":"x"}],"tool_choice":"required","reasoning":{"effort":"low"}}`)
+	if string(grokBody(same)) != string(same) {
+		t.Fatal("a tool_choice with tools was changed")
 	}
 }
 

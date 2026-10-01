@@ -9,6 +9,7 @@ import (
 // off: an account's too, which keeps only the user's settings.
 func TestProviderOffKept(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	if err := Save(Provider{ID: "relay", Name: "Relay", Key: "sk-1", Chat: "https://relay.example.com/v1", Models: []string{"m"}}); err != nil {

@@ -196,6 +196,7 @@ func accountRows(ls []provider.Login, now time.Time) []accountRow {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	usage := map[string]map[string]provider.SubscriptionQuota{}
+	provider.AskClaudeUsage()
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, l := range ls {
@@ -267,8 +268,8 @@ func untilShort(d time.Duration) string {
 // addAccount signs in to one more subscription in the browser, the way the
 // window's "Add account" does.
 func addAccount(agentID string) error {
-	if agentID == "antigravity" {
-		fmt.Println(bold.Render("!"), provider.AntigravityRisk)
+	if risk := map[string]string{"antigravity": provider.AntigravityRisk, "claude": provider.ClaudeRisk}[agentID]; risk != "" {
+		fmt.Println(bold.Render("!"), risk)
 		fmt.Print("Sign in anyway? [y/N] ")
 		var yes string
 		fmt.Scanln(&yes)
@@ -302,7 +303,7 @@ func addAccount(agentID string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if st.PasteCallback {
-		fmt.Println("If the browser cannot return to magpie, paste its final callback URL here and press Enter:")
+		fmt.Println("If the page the browser ends on won't load (magpie on a server or in Docker), paste its whole address here and press Enter:")
 		id := st.ID
 		go func() {
 			lines := bufio.NewScanner(os.Stdin)

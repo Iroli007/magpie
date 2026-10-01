@@ -13,6 +13,7 @@ import (
 func init() {
 	movers["factory"] = &mover{
 		pkg:    "@magpie-community/opencode-factory-auth",
+		min:    "0.1.4", // a failure's status and its sign-in mark as the built-in's
 		agents: []string{"factory"},
 		out: func() ([]Moving, error) {
 			ls := factoryLogins()
@@ -22,7 +23,7 @@ func init() {
 			var out []Moving
 			for _, l := range ls {
 				c := l.creds
-				out = append(out, Moving{User: l.User, First: l.Active, On: l.On, Lapsed: l.Lapsed != "", Auth: map[string]any{
+				out = append(out, Moving{User: l.User, First: l.Active, On: l.On, Lapsed: l.Lapsed != "", Plan: l.Plan, Auth: map[string]any{
 					"type":                 "oauth",
 					"access":               c.Access,
 					"refresh":              c.Refresh,

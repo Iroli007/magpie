@@ -482,9 +482,14 @@ func factoryMendOrg(ctx context.Context, user string, status int, body []byte) b
 }
 
 // factoryExplain is what the user can do about a 403 Factory still answers
-// once magpie has sent what droid sends: whether Factory lets the account
-// use the model is Factory's to say (an org's model policy, a plan without
-// it), so droid itself is the test.
+// once magpie has sent what droid sends. Factory takes a subscription's
+// model requests only from Droid: in #242 the same account's Claude, GPT and
+// GLM models answered droid through magpie every time, with magpie's
+// headers, and refused Grok Build's and Claude Code's every time, on the
+// same models and efforts, a request's body (droid's system prompt opens
+// with its own "You are Droid…") the only difference. So the first thing to
+// say is to use the models from Droid; an org's model policy or the plan is
+// what is left when Droid is refused too.
 func factoryExplain(status int, body []byte) string {
 	if status != http.StatusForbidden {
 		return ""
@@ -492,7 +497,7 @@ func factoryExplain(status int, body []byte) string {
 	if factoryOrgRefused(status, body) {
 		return "the Factory account's organization changed; remove the account in magpie and sign in to it again"
 	}
-	return "Factory refused this account the request; check that `droid`, signed in to the same account and organization, can use this model (an organization's model policy or the plan may not allow it), and if it can, remove the Factory account in magpie and sign in to it again"
+	return "Factory takes a Factory subscription's requests only from Droid itself: other agents' (Claude Code, Grok Build…) are refused even on models Droid runs through magpie, so use the Factory models from Droid; if Droid is refused too, the organization's model policy or the plan doesn't allow this model"
 }
 
 // factoryFirstOrg is the first WorkOS org /api/cli/org says the account is
@@ -659,7 +664,7 @@ func factoryProvider(a factoryLogin) Provider {
 		}
 		return nil
 	}
-	acct.retry = func(ctx context.Context, status int, body []byte) bool {
+	acct.retry = func(ctx context.Context, _ string, status int, body []byte) bool {
 		return factoryMendOrg(ctx, user, status, body)
 	}
 	acct.explain = factoryExplain

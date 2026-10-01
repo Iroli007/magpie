@@ -11,9 +11,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/yetone/magpie/internal/netproxy"
 )
 
 // sandbox gives the test its own magpie folders and the Bun on PATH; a
@@ -72,6 +78,12 @@ func TestFakePlugin(t *testing.T) {
 	if npm["fake-1"] != "@ai-sdk/openai-compatible" || npm["fake-claude"] != "@ai-sdk/anthropic" || npm["fake-gemini"] != "@ai-sdk/google" {
 		t.Fatalf("models = %+v", ps[0].Models)
 	}
+	// whether a model takes images is said only where the plugin said it
+	for _, m := range ps[0].Models {
+		if want := map[string][2]bool{"fake-1": {false, false}, "fake-claude": {true, true}, "fake-gemini": {false, true}}[m.ID]; m.Image != want[0] || m.ImageSaid != want[1] {
+			t.Errorf("%s: image %v, said %v; want %v", m.ID, m.Image, m.ImageSaid, want)
+		}
+	}
 
 	// the browser method asks where, then a team only for work
 	p, err := NextPrompt(ctx, "fakeco", 1, map[string]string{})
@@ -110,7 +122,7 @@ func TestFakePlugin(t *testing.T) {
 	if saved["fakeco"]["type"] != "oauth" || saved["fakeco"]["refresh"] != "r-blue" || saved["fakeco"]["accountId"] != "blue@fake" {
 		t.Fatalf("saved %v", saved)
 	}
-	if fi, _ := os.Stat(AuthPath()); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(AuthPath()); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 { // Windows keeps no mode bits
 		t.Fatalf("plugin-auth.json is %v", fi.Mode().Perm())
 	}
 	if !SignedIn("fakeco") {
@@ -143,6 +155,10 @@ func TestFakePlugin(t *testing.T) {
 	// hook added its header; the plugin saw the provider's models
 	if h.Get("Authorization") != "Bearer fresh-r-blue" || h.Get("X-Plugin-Model") != "fake-1" || h.Get("X-Models") != "fake-1,fake-claude,fake-gemini" {
 		t.Fatalf("headers = %v", h)
+	}
+	// the plugin's fetch got the body as a string, as OpenCode hands it
+	if h.Get("X-Body-Type") != "string" {
+		t.Fatalf("the plugin got a %s body", h.Get("X-Body-Type"))
 	}
 	b, _ = os.ReadFile(AuthPath())
 	json.Unmarshal(b, &saved)
@@ -208,7 +224,7 @@ func TestPluginAccounts(t *testing.T) {
 		t.Fatalf("accounts %+v %+v", blue, red)
 	}
 	ps, err := Providers(ctx)
-	if err != nil || len(ps) != 1 || len(ps[0].Accounts) != 2 || ps[0].Accounts[0].AccountID != "blue@fake" || ps[0].Accounts[1] != (Account{Key: red.Account, Type: "oauth", AccountID: "red@fake"}) {
+	if err != nil || len(ps) != 1 || len(ps[0].Accounts) != 2 || ps[0].Accounts[0].AccountID != "blue@fake" || !reflect.DeepEqual(ps[0].Accounts[1], Account{Key: red.Account, Type: "oauth", AccountID: "red@fake", Models: ps[0].Accounts[0].Models}) || len(ps[0].Accounts[1].Models) == 0 {
 		t.Fatalf("Providers = %+v, %v", ps, err)
 	}
 	if c := Cached(); len(c) != 1 || len(c[0].Accounts) != 2 || c[0].Accounts[1].Key != red.Account || c[0].AccountID != "blue@fake" {
@@ -258,5 +274,183 @@ func TestPluginAccounts(t *testing.T) {
 	Restart()
 	if err := SignOut(ctx, "fakeco", ""); err != nil || SignedIn("fakeco") {
 		t.Fatalf("SignOut all: %v", err)
+	}
+}
+
+// A plugin that fails to load (a broken update, its files gone) keeps its
+// providers in sight, as it keeps its sign-ins: a provider moved onto it
+// doesn't vanish as if the plugin were removed.
+func TestUnloadedPluginKeepsProviders(t *testing.T) {
+	sandbox(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	src, _ := os.ReadFile("testdata/fake/index.js")
+	file := filepath.Join(t.TempDir(), "index.js")
+	if err := os.WriteFile(file, src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Add(ctx, file); err != nil {
+		t.Fatal(err)
+	}
+	if ps, err := Providers(ctx); err != nil || len(ps) != 1 {
+		t.Fatalf("Providers = %+v, %v", ps, err)
+	}
+	if err := os.WriteFile(file, []byte("export default {{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	Restart()
+	ps, err := Providers(ctx)
+	if err != nil || len(ps) != 1 || ps[0].ID != "fakeco" {
+		t.Fatalf("with the plugin failing to load, Providers = %+v, %v", ps, err)
+	}
+	if cs := Cached(); len(cs) != 1 || cs[0].ID != "fakeco" {
+		t.Fatalf("Cached = %+v", cs)
+	}
+	// removed, it goes
+	if err := Remove(ctx, file); err != nil {
+		t.Fatal(err)
+	}
+	if ps, _ := Providers(ctx); len(ps) != 0 {
+		t.Fatalf("after removing it, Providers = %+v", ps)
+	}
+}
+
+// A request made for a provider or an account with its own proxy goes
+// through it, the plugin's own fetches and its usage's among them; one
+// set to go direct goes through none, though magpie's global proxy is in
+// the host's env.
+func TestPluginProxy(t *testing.T) {
+	sandbox(t)
+	var mu sync.Mutex
+	var own, global []string // what each proxy was asked for
+	proxy := func(seen *[]string, answer string) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			*seen = append(*seen, r.URL.String())
+			mu.Unlock()
+			fmt.Fprint(w, answer)
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	ownSrv, globalSrv := proxy(&own, "own"), proxy(&global, "global")
+	t.Setenv("HTTP_PROXY", globalSrv.URL)
+	t.Setenv("http_proxy", globalSrv.URL)
+	t.Setenv("FAKE_BASE", "http://vendor.invalid/v1")
+	t.Setenv("FAKE_USAGE", "http://vendor.invalid/usage")
+	t.Setenv("FAKE_MODELS", "http://vendor.invalid/models")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	abs, _ := filepath.Abs("testdata/fake/index.js")
+	if _, err := Add(ctx, abs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Providers(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := APIKey(ctx, "fakeco", 0, nil, "k1", NewAccount); err != nil {
+		t.Fatal(err)
+	}
+	fetch := func(ctx context.Context) (string, error) {
+		res, err := Fetch(ctx, FetchRequest{Provider: "fakeco", Model: "fake-1", NPM: "@ai-sdk/openai-compatible",
+			URL: "http://vendor.invalid/v1/chat/completions", Method: "POST", Body: []byte(`{}`)})
+		if err != nil {
+			return "", err
+		}
+		defer res.Body.Close()
+		b, err := io.ReadAll(res.Body)
+		return string(b), err
+	}
+	last := func(seen *[]string) string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(*seen) == 0 {
+			return ""
+		}
+		return (*seen)[len(*seen)-1]
+	}
+
+	// none of its own: magpie's
+	if b, err := fetch(ctx); err != nil || b != "global" {
+		t.Fatalf("with no proxy of its own: %q, %v", b, err)
+	}
+	// its own, as host:port
+	mine := netproxy.With(ctx, strings.TrimPrefix(ownSrv.URL, "http://"))
+	if b, err := fetch(mine); err != nil || b != "own" || last(&own) != "http://vendor.invalid/v1/chat/completions" {
+		t.Fatalf("with its own proxy: %q, %v; the proxy saw %q", b, err, last(&own))
+	}
+	if u, err := AccountUsage(mine, "fakeco", ""); err != nil || u.Plan != "own" || last(&own) != "http://vendor.invalid/usage" {
+		t.Fatalf("usage with its own proxy: %+v, %v", u, err)
+	}
+	// a move's check of the account asks the vendor as its requests do
+	mu.Lock()
+	own = nil
+	mu.Unlock()
+	c, err := Check(mine, "fakeco", "")
+	mu.Lock()
+	asked := slices.Clone(own)
+	mu.Unlock()
+	if err != nil || !slices.Contains(c.Models, "fake-own") || !slices.Contains(asked, "http://vendor.invalid/models") || !slices.Contains(asked, "http://vendor.invalid/usage") {
+		t.Fatalf("a check with its own proxy: %+v, %v; the proxy saw %q", c, err, asked)
+	}
+	// direct: vendor.invalid can't be reached but through a proxy
+	mu.Lock()
+	n := len(global) + len(own)
+	mu.Unlock()
+	if b, err := fetch(netproxy.With(ctx, "direct")); err == nil {
+		t.Fatalf("went direct, yet answered %q", b)
+	}
+	mu.Lock()
+	m := len(global) + len(own)
+	mu.Unlock()
+	if m != n {
+		t.Fatalf("a direct request went through a proxy: own %v, global %v", own, global)
+	}
+	// and the next with none of its own takes magpie's again
+	if b, err := fetch(ctx); err != nil || b != "global" {
+		t.Fatalf("after a direct one: %q, %v", b, err)
+	}
+}
+
+// Plugins changed by another magpie (magpie plugin add or move in a
+// terminal while the app runs) reach the one running: its host starts
+// again with them, and meanwhile it knows the providers the other magpie
+// was told, where it went on without them until restarted.
+func TestPluginsChangedElsewhere(t *testing.T) {
+	sandbox(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	abs, _ := filepath.Abs("testdata/fake/index.js")
+	if _, err := Add(ctx, abs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Providers(ctx); err != nil {
+		t.Fatal(err)
+	}
+	gen := generation.Load()
+
+	// the other magpie: its providers told, then plugins.json written
+	var ps []Provider
+	b, _ := os.ReadFile(providersPath())
+	_ = json.Unmarshal(b, &ps)
+	ps = append(ps, Provider{ID: "elsewhere", Spec: abs, Name: "Elsewhere"})
+	b, _ = json.Marshal(ps)
+	if err := os.WriteFile(providersPath(), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := os.ReadFile(listPath())
+	time.Sleep(10 * time.Millisecond)
+	if err := os.WriteFile(listPath(), append(l, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.ContainsFunc(Cached(), func(p Provider) bool { return p.ID == "elsewhere" }) {
+		t.Fatalf("the other magpie's providers unknown: %+v", Cached())
+	}
+	if _, err := Providers(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if generation.Load() == gen {
+		t.Fatal("the host running kept the plugins it had loaded")
 	}
 }

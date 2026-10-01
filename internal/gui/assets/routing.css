@@ -146,9 +146,17 @@
 .masking .pii { animation: rtpii .35s ease-out both; }
 @keyframes rtpii { from { filter: blur(0); opacity: 1; } }
 #view-routing .rt { margin: 0; }
-.rt-more { container-type: inline-size; padding-bottom: 12px; }
+.rt-more { container: rt-more / inline-size; padding-bottom: 12px; }
 .rt-cols { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 16px; }
-@container (min-width: 860px) { .rt-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
+/* side by side, the accounts end where the requests do and scroll like
+   them, not run on down the page beside an empty column: of no height of
+   their own, they take what the requests give the row, and no less than a
+   few accounts' */
+@container rt-more (min-width: 860px) {
+  .rt-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rt-cols:not(.solo) .rt-col:last-child { display: flex; flex-direction: column; }
+  .rt-cols:not(.solo) .rt-acts { flex: 1 1 auto; height: 0; min-height: 216px; overflow-y: auto; overscroll-behavior: contain; }
+}
 /* each column its own container: a request's row lays itself out by the
    list's width, not the page's (#273: in two columns of ~470px the rows
    kept to one line, and the reasoning was drawn over the numbers) */
@@ -180,6 +188,7 @@
 .rt-req .asked.kinded .m { flex: none; max-width: calc(100% - 3.2em - 40px); }
 .rt-req .to .swap, .rt-steps li .swap { font-size: 10.5px; line-height: 16px; padding: 0 5px; border-radius: 5px; color: var(--amber); background: var(--amber-soft); white-space: nowrap; }
 .rt-req .to .swap { flex: none; max-width: 70%; }
+.rt-req .to .routed, .pr-to .routed { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; font-size: 10.5px; line-height: 16px; color: var(--muted); white-space: nowrap; }
 .rt-steps li.swap::before { background: var(--amber); }
 .rt-req .meta { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
 /* one line wants room for the time, the model, where it went at what
@@ -216,6 +225,7 @@
 .rt-act .st.left { color: var(--muted); }
 .rt-act .tally { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .rt-act .tally .bad { color: var(--red); }
+.rt-act .mdls { display: flex; flex-wrap: wrap; gap: 4px; }
 .rt-act .fix { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 11px; }
 .rt-act .bar { height: 3px; border-radius: 2px; background: var(--card-2); overflow: hidden; }
 .rt-act .bar i { display: block; height: 100%; border-radius: 2px; background: var(--muted); }

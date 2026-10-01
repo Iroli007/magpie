@@ -158,6 +158,10 @@ func (s *signInFlow) kiroCallback(w http.ResponseWriter, r *http.Request) {
 			fail("AWS sent back no code")
 			return
 		}
+		if !s.claim() {
+			kiroFinishing(w)
+			return
+		}
 		var tok struct {
 			AccessToken  string `json:"accessToken"`
 			RefreshToken string `json:"refreshToken"`
@@ -181,6 +185,10 @@ func (s *signInFlow) kiroCallback(w http.ResponseWriter, r *http.Request) {
 	default:
 		switch opt := q.Get("login_option"); opt {
 		case "google", "github":
+			if !s.claim() {
+				kiroFinishing(w)
+				return
+			}
 			var tok struct {
 				AccessToken  string `json:"accessToken"`
 				RefreshToken string `json:"refreshToken"`
@@ -222,7 +230,9 @@ func (s *signInFlow) kiroCallback(w http.ResponseWriter, r *http.Request) {
 			}
 			k.region, k.clientID, k.clientSecret = region, reg.ClientID, reg.ClientSecret
 			k.provider = map[string]string{"builderid": "BuilderId", "awsidc": "Enterprise", "internal": "Internal"}[opt]
+			s.mu.Lock()
 			k.state, k.verifier = randomToken(24), randomToken(48)
+			s.mu.Unlock()
 			sum := sha256.Sum256([]byte(k.verifier))
 			a := url.Values{}
 			a.Set("response_type", "code")
@@ -269,6 +279,12 @@ func (s *signInFlow) kiroCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	s.finish(SignInState{State: "done", User: user, Plan: plan, Using: using})
 	signInPage(w, true, "You're signed in", fmt.Sprintf("%s is added to magpie. You can close this tab.", user))
+}
+
+// kiroFinishing answers a second callback while the first is traded for
+// the account: the browser's own, or its address pasted into magpie.
+func kiroFinishing(w http.ResponseWriter) {
+	signInPage(w, false, "This sign-in is already finishing", "magpie shows the account when it's done.")
 }
 
 // awsRedirect is where AWS sends the browser back.

@@ -338,7 +338,12 @@ func (s *Server) systemOne(ctx context.Context, p provider.Provider, model strin
 		} `json:"usage"`
 	}
 	_ = json.Unmarshal(b, &use)
+	var keyID, keyName string
+	if p.Account == nil && p.Key != "" {
+		keyID, keyName = provider.KeyID(p.Key), p.KeyName
+	}
 	usage.Append(usage.Record{Time: start, Agent: usage.AgentOf(RouterAgent), Provider: p.ID, Host: p.Where(), Model: model, Requested: model, Served: use.Model,
+		ProviderKeyID: keyID, ProviderKeyName: keyName,
 		Input: use.Usage.Input, Output: use.Usage.Output, Millis: time.Since(start).Milliseconds(), Status: status})
 	return b, nil
 }
@@ -453,7 +458,12 @@ func (s *Server) serveSystemOne(w http.ResponseWriter, r *http.Request) {
 		errMsg = provider.APIError(b, fmt.Sprintf("%d %s", status, http.StatusText(status)))
 	}
 	tokens := use.Usage.Input + use.Usage.Output
+	var keyID, keyName string
+	if p.Account == nil && p.Key != "" {
+		keyID, keyName = provider.KeyID(p.Key), p.KeyName
+	}
 	usage.Append(usage.Record{RouteID: tr.ID, Time: start, Agent: agentOf(r), Provider: p.ID, Host: p.Where(), Model: model, Requested: asked, Served: use.Model,
+		ProviderKeyID: keyID, ProviderKeyName: keyName,
 		Input: use.Usage.Input, Output: use.Usage.Output, Millis: time.Since(start).Milliseconds(), Status: status})
 	end(status, errMsg, tokens)
 	if ctype == "" || status < 300 {

@@ -83,13 +83,15 @@ and there is a terminal version (`magpie tui`) and a plain CLI.
 | Cursor CLI   | `~/.cursor/cli-config.json`       | model           |
 | Copilot CLI  | `~/.copilot/settings.json`        | model           |
 | Crush        | `~/.config/crush/crush.json`      | large, small    |
-| DeepSeek Harness (dsh) | `~/.dsh/config.yaml` (`$DSH_HOME`) | model |
+| DeepSeek Harness (dsh) | `~/.dsh/profiles/*/cordis.patch.yml` (`$DSH_HOME`; a custom provider, Magpie), or `~/.dsh/config.yaml` before dsh 0.1.5 | model, effort |
 | Command Code | `~/.commandcode/settings.json` (+ `providers.json`) | model |
 | fx           | `~/.fx/settings.json`             | model (a keyless `magpie` provider) |
 | omp (oh-my-pi) | `~/.omp/agent/config.yml` (+ `models.yml`) | model |
 | Devin        | `~/.config/devin/config.json` (`%APPDATA%\devin\config.json` on Windows) | model |
 | Hermes Agent | `~/.hermes/config.yaml` (`$HERMES_HOME`) | model |
 | Kimi Code    | `~/.kimi/config.toml` (`$KIMI_SHARE_DIR`) | model (a `magpie` provider; magpie's models in Kimi's /model) |
+| Muse Code    | `~/.config/muse/settings.json` (`$XDG_CONFIG_HOME`) | model (endpoint_transport to the gateway, auth none; magpie's models in Muse's list) |
+| MiniMax Code (mcode) | `~/.minimax/config.yaml` (`$MINIMAX_DATA_DIR`) | model (a `magpie` custom provider; magpie's models in its /model) |
 | Droid (Factory) | `~/.factory/settings.json` (`$FACTORY_HOME_OVERRIDE`) | model (magpie's models as BYOK `customModels`, in Droid's /model) |
 | Cline (CLI)  | `~/.cline/data/settings/providers.json` (`$CLINE_DIR`) | model, effort (magpie takes its openai-compatible provider) |
 | Qoder (CLI)  | `~/.qoder/settings.json` (`$QODER_CONFIG_DIR`) | model, effort (a `magpie` custom provider; needs a Qoder plan with BYOK) |
@@ -130,6 +132,17 @@ separate Responses endpoint, `catalog=` to borrow a models.dev list, and
 `models=` to name the models to expose. Anything a preset does not know can
 be overridden the same way.
 
+`magpie usage` also lists **upstream provider keys** to help check upstream bills.
+Each request records the fingerprint and saved name of the key that actually
+served it, including image calls and account/key failover. The CSV adds
+`provider_key_id` and `provider_key_name`. JSON uses `providerKeyId` and `providerKeyName`, distinct from gateway caller
+keys. System One calls use the same attribution. No raw credential is stored
+in usage records.
+Rotating the provider's first key does not move old usage to its replacement;
+deleted keys keep their historical identity. Older records appear as
+**key not recorded**, never inferred from today's configured key.
+These are upstream credentials, not keys clients use to call Magpie.
+
 One magpie can serve several computers (an office one, a personal one):
 share it on the network (Settings → Share on local network), and on each
 other computer add it as a **Remote magpie** — in the app's Add sheet, or
@@ -139,6 +152,9 @@ routing groups (`office/group/…`) and usage are the shared one's. A request
 goes on in the API the agent spoke — Anthropic Messages, Responses, Chat
 Completions, token counting — and a model the shared magpie's provider serves
 on another API only is turned into that API once, never on both computers.
+Its list is the models the shared magpie's agents are shown, each named with
+its provider there (`Claude Sonnet 5 · Relay A · office`), and its image
+models are listed under Settings → Images and draw through it.
 
 Baidu Qianfan's [Token Plans](https://cloud.baidu.com/doc/qianfan/s/Dmrabu8b6)
 are available as `baidu-qianfan`: a personal (个人版) and an enterprise (企业版)
@@ -169,6 +185,39 @@ magpie plugin off opencode-gemini-auth  # on brings it back; rm removes it; upda
 A provider id magpie already has (google, openai, anthropic) is
 `<id>-plugin`. In the app, Settings → Plugins adds and removes them, and
 the providers they sign in to are in Add provider → From plugins.
+
+#### For plugin authors
+
+A plugin is an OpenCode plugin; magpie reads a few more fields, which
+OpenCode ignores:
+
+- **The provider's icon**: `icon` on the `auth` hook, or `"magpie": {
+  "icon": "…" }` in the plugin's `package.json` (for every provider it
+  signs in to that names none). An `https://` URL of a picture on a public
+  host, which magpie fetches once and keeps, or a `data:image/…` URI;
+  PNG, JPEG, GIF, WebP, ICO or SVG, at most 1 MB. Anything else is ignored,
+  and the icon the plugin market lists for the plugin is shown instead.
+- **An API key's field**: a `type: "api"` method's `label` titles the key's
+  field, as OpenCode's dialog does (one that only says "API key" reads
+  "<provider> API key"), and its `placeholder` is the hint inside the field
+  (and after the question in `magpie plugin login`). The method's `prompts`
+  are asked first, as in OpenCode, and reach `authorize(inputs)`.
+
+```js
+export const LemonPlugin = async () => ({
+  auth: {
+    provider: "lemon",
+    icon: "https://lemon.example/icon.png", // or "data:image/svg+xml;base64,…"
+    methods: [
+      { type: "api", label: "Lemon API key (lemon.example/keys)", placeholder: "sk-lemon-…" },
+    ],
+  },
+})
+```
+
+In TypeScript, `icon` and `placeholder` aren't in OpenCode's types: build
+the hook as a variable (or cast it), or put the icon in `package.json`.
+
 ### What a model costs
 
 A call is counted at its **effective price**: what you set for that provider
@@ -206,9 +255,111 @@ reports read the effective price.
 Two things worth knowing. The ledger and the session totals re-price when they
 are read, so adding or changing a price restates earlier figures: they are
 estimates at the effective price, not settled charges. And a price is per
-provider and model — usage records do not retain which key or account served
-a call, so a provider charging different tariffs per account cannot be costed
-exactly from a single provider-wide price.
+provider and model. Records now identify upstream API keys, but a provider
+charging different tariffs per key still cannot be costed exactly from a
+single provider-wide price.
+
+### What a model takes
+
+A provider that serves a model models.dev does not list, or lists at the
+wrong size, has a window and a reply limit magpie cannot know. Say what they
+are:
+
+```sh
+magpie model context relay-a/gpt-5.5 262144    # the window a request may hold, or 1m
+magpie model output  relay-a/gpt-5.5 131072    # the most a reply may hold, or 128k
+magpie model context "relay-a/*" 200000        # every model of that provider
+magpie model output  relay-a/gpt-5.5 --reset   # take your limit off this model
+```
+
+The `*` is quoted because zsh treats a name it cannot expand as a command
+that failed, rather than passing the name on as bash does.
+
+Both are looked for in this order: **this model → this provider's `*` → the
+provider's own list → models.dev.** `--reset` removes only the value this
+model has of its own.
+
+A provider you keep unlisted, or switch off, takes them like any other: the
+numbers are kept, and are what its models take once it is serving again.
+
+A window is a number agents are shown **and a routing input**: at 95% of the
+window a request held on a routing-group member moves to one that takes more,
+so overstating a window makes that move happen too late. A reply limit is
+advertised in `/models` and is what a group advertises the smallest of; the
+gateway does not itself cap a reply by it.
+
+Saving a window or a reply limit writes that number into the model lists magpie
+keeps in the agents' own files — Pi's `contextWindow` and `maxTokens`, OpenCode's
+`limit`, and Crush's, droid's, Cline's, Qoder's and Zcode's — which an agent reads
+at start-up. A session already running therefore keeps the window it began with,
+while the gateway's own `/models` and every request from then on are right at
+once.
+
+### The name a vendor knows a model by
+
+A relay often serves a model under an id of its own — a prefix it namespaces
+with, a dated name, a `-latest` that is not what models.dev calls it. Say
+which name to ask for:
+
+```sh
+magpie model wire relay-b/model-2                           # what the vendor is asked for
+magpie model wire relay-b/model-2 vendor-c/model-2-preview  # ask for it by this
+magpie model wire 'relay-b/*' 'vendor-c/*'                  # every model, * being the model
+magpie model wire relay-b/model-2 --reset                   # ask for it by its own name again
+magpie model wires                                          # every name your vendors are asked for models by
+```
+
+Quote the arguments with a `*` in them: zsh reads a bare `*` as a glob and
+answers `no matches found`. In the name, `*` stands for the model itself, so
+`'relay-b/*' 'vendor-c/*'` sends `vendor-c/model-3` for `model-3` and
+`vendor-c/model-2` for `model-2` — one name for a relay that namespaces its
+models, each still asked for by its own. A name with no `*` in it sends every
+model of that key under that one name, which is the right answer only for a
+relay that does serve them all alike. The model's own key wins over the
+provider's, and `--reset` takes away only the one it is given, so resetting
+`relay-b/model-2` while `'relay-b/*'` is set leaves the provider's name in
+force — the CLI says which of the two is in force after every change, naming
+the models a name for the whole provider leaves to their own, and
+`--reset` over a name that was never given says so rather than ticking a
+removal that took nothing away.
+
+Only the request that goes out carries that name, in the model field of a
+chat, Responses or Anthropic Messages request and of an Anthropic token
+count; image requests are left with the name magpie knows the model by.
+Gemini CLI and Antigravity sign-ins go on Code Assist, and there the model
+an effort picks is a variant of the model magpie knows — `gemini-3.7-flash`
+at `high` is sent as `gemini-3.7-flash-high` — so a `*` in the name is that
+variant: `'antigravity/*' 'vendor-c/*'` asks for `vendor-c/gemini-3.7-flash-high`
+and `vendor-c/gemini-3.7-flash-low` each by its own, as it does everywhere
+else. A name with no `*` in it, or one given for `antigravity/gemini-3.7-flash`
+itself, is that one name at every level.
+
+Everything else keeps the name magpie knows the model by: the catalog agents
+pick from, the routing groups' membership, `GET /models`, and what a call is
+recorded and priced as. What the vendor's own reply said answered is kept
+beside that, in the ledger's `served_model`, which is what it is for, and it
+is compared with the name the vendor was asked for — so a model answered
+under the relay's own id is not read as a swap. That is against the names
+in force when the ledger is read, since a record keeps what the vendor
+answered and not the name the request went out under: naming a model after
+the call re-judges that call, which is then left reading as a swap. What a
+provider *supports* — whether it takes a temperature, which reasoning levels
+fit — is still asked about the model magpie knows, so a rename upstream does
+not change how magpie behaves towards the model.
+
+An upstream name is **one provider's**, not the model's: another provider
+serving the same id is asked for it under its own name, or this one. The
+model it is given for has to be one that provider serves — `<provider>/*`
+is the way to say one for every model — because a name for a model magpie
+would never ask the provider for is not a name of its own: the model is
+asked for by the name magpie knows it by, and nothing anywhere would say the
+name given for it is not the one in force. A relay that serves a model under
+an id of its own *and* lists it does get the name; what is refused is a
+model the provider's list does not have at all. The model test uses the name
+too, so a relay that only knows its own ids does not report a working model
+as broken. An image model is the exception that follows the rule above: it is
+tested by the name magpie knows it by, on the images API and on the chat it
+falls back to, because that is how a drawing is asked for.
 
 ### Routing groups
 
@@ -255,7 +406,9 @@ Keychain or `~/.claude/.credentials.json`), Codex (a ChatGPT login in
 `~/.codex/auth.json`), Copilot (a GitHub login in
 `~/.config/github-copilot/apps.json`), Devin (`devin auth login`, kept in
 `~/.local/share/devin/credentials.toml`) and Qoder (signed in from magpie with
-its OAuth device flow, kept in magpie's own config) appear in `magpie providers` and in
+its OAuth device flow, kept in magpie's own config; Qoder CN is its own
+subscription beside it, for accounts on qoder.cn made with an Alibaba Cloud
+account or a phone number, which can't sign in on qoder.com) appear in `magpie providers` and in
 the Providers tab as *signed in as …*, with their models spelled
 `claude/claude-sonnet-5`, `codex/gpt-5.5`, `copilot/claude-sonnet-4.5` or
 `devin/swe-2-max` in every other agent's picker. magpie reads the agent's own credentials each
@@ -428,7 +581,14 @@ Windows uses the WebView2 runtime that ships with the OS.
 ### Docker
 
 `docker build` makes a server image: the terminal-only binary on
-distroless, run as nonroot, with magpie's files in a volume at `/config`.
+distroless (`cc`, for the glibc the plugins' Bun needs), run as nonroot,
+with everything it keeps in a volume at `/config`: magpie's own files
+(`/config/magpie`), the sign-ins kept where their agent keeps them (HOME is
+`/config/home`, so `~/.codex`, `~/.claude`… are in it) and the cache with the
+Bun plugins run on (`/config/cache`, downloaded once). A volume made by an
+older image keeps working: magpie adds these folders to it on start, and only
+sign-ins made with that older image, which lived outside the volume, have to
+be made again.
 
 ```sh
 docker build -t magpie .
@@ -442,16 +602,30 @@ on every interface of the host, past its firewall. To reach it from other
 machines, turn on Settings → Share on local network in the browser UI (or
 put `"lan": true, "lanKey": "sk-magpie-…"` in `/config/magpie/settings.json`):
 from then on a request from outside the container must carry that key as its
-API key, and only then publish the port beyond 127.0.0.1.
+API key, and only then publish the port beyond 127.0.0.1. Inside the container
+magpie only sees the container's own address (Docker's 172.17.x), so set
+`-e MAGPIE_PUBLIC_URL=http://<the host's or NAS's address>:3425` (the port
+published on the host) for the address it shows and prints to be the one
+other machines use.
 
 For the browser UI run the image with `magpie web --addr 0.0.0.0:3430 --no-open`
 in place of the default `serve`, and open
 `http://localhost:3430/?k=<key from docker logs magpie>` (set `MAGPIE_WEB_KEY`
-to keep one key across restarts). There you add providers and import
-sign-ins from a file; a subscription sign-in started in the container cannot
-finish, because the vendor sends the browser back to the container's own
-loopback, so sign in on a machine where magpie runs with a browser. Keys and
-sign-ins live in the volume, so a restart keeps them.
+to keep one key across restarts). There you add providers, sign in to
+subscriptions and import sign-ins from a file. The vendor sends a sign-in's
+browser back to `localhost` (ChatGPT to `http://localhost:1455/auth/callback?code=…`),
+which is your own machine, not the container, so that page won't load: copy
+its whole address from the address bar and paste it into the sign-in's
+*Callback URL* field. `docker exec -it magpie /magpie accounts add codex`
+does the same in a terminal: open the link it prints, then paste the address
+the browser ended on. Keys, sign-ins and plugins live in the volume, so a
+restart, or a new container on the same volume, keeps them.
+
+The image has a `HEALTHCHECK`: `magpie healthcheck` exits 0 while the gateway
+answers on `MAGPIE_ADDR`, under `serve` and `web` alike, so `docker ps` shows
+the container as healthy (Compose: `depends_on: condition: service_healthy`)
+with no curl in the image. Bind-mounting a folder at `/config` in place of a
+named volume works too; it has to be writable by uid 65532.
 
 ### Developing
 

@@ -16,11 +16,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/netproxy"
 	"github.com/yetone/magpie/internal/settings"
 )
 
@@ -39,6 +41,8 @@ type message struct {
 	Headers  map[string]string `json:"headers"`
 	Data     string            `json:"data"`
 	Provider string            `json:"provider"`
+	Account  string            `json:"account"`
+	Said     string            `json:"said"`
 	Level    string            `json:"level"`
 	Message  string            `json:"message"`
 	Title    string            `json:"title"`
@@ -88,6 +92,20 @@ func OnChange(f func()) {
 	onChangeMu.Lock()
 	onChange = append(onChange, f)
 	onChangeMu.Unlock()
+}
+
+var (
+	onSignInMu sync.Mutex
+	onSignIn   func(provider, account, said string)
+)
+
+// OnSignIn registers f to be told what a plugin said, outside an answer,
+// its account's sign-in is: "expired", "kept" or "renewed" (a models
+// hook's error saying it).
+func OnSignIn(f func(provider, account, said string)) {
+	onSignInMu.Lock()
+	onSignIn = f
+	onSignInMu.Unlock()
 }
 
 func changed() {
@@ -161,8 +179,13 @@ func hostFile() (string, error) {
 // get is the running host, started (Bun downloaded, the plugins loaded)
 // when there is none.
 func get(ctx context.Context) (*host, error) {
+	checkList()
 	hostMu.Lock()
 	defer hostMu.Unlock()
+	if hostStale.Swap(false) && current != nil {
+		go current.stop()
+		current = nil
+	}
 	if current != nil && current.alive() {
 		return current, nil
 	}
@@ -195,6 +218,7 @@ func start(ctx context.Context) (*host, error) {
 	}
 	// the host outlives the request that started it
 	cmd := bunCommand(context.Background(), bun, settings.Dir(), "run", js)
+	cmd.Env = hostEnv(cmd.Env)
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -296,6 +320,13 @@ func (h *host) dispatch(m message) {
 		switch m.Event {
 		case "auth":
 			changed()
+		case "signIn":
+			onSignInMu.Lock()
+			f := onSignIn
+			onSignInMu.Unlock()
+			if f != nil {
+				go f(m.Provider, m.Account, m.Said)
+			}
 		case "toast":
 			log.Printf("plugin: %s %s", m.Title, m.Message)
 		case "log":
@@ -408,6 +439,42 @@ type FetchRequest struct {
 	Headers  map[string]string `json:"headers"`
 	Body     []byte            `json:"-"`
 	Session  string            `json:"session,omitempty"`
+	// Proxy is the provider's or the account's own proxy (netproxy.With):
+	// "direct", or its URL; "" follows magpie's. Fetch takes it from ctx
+	// when it isn't set.
+	Proxy string `json:"proxy,omitempty"`
+}
+
+// proxyOf is the proxy ctx names for the host: "" when it names none,
+// "direct", or the proxy's URL.
+func proxyOf(ctx context.Context) string {
+	switch c := strings.TrimSpace(netproxy.Choice(ctx)); c {
+	case "", "direct":
+		return c
+	default:
+		if u, err := netproxy.Parse(c); err == nil {
+			return u.String()
+		}
+		return c
+	}
+}
+
+// hostEnv is env for the host, its *_PROXY named MAGPIE_*_PROXY: Bun
+// reads *_PROXY once and puts every fetch through them, so a provider set
+// to "direct" couldn't go around them. host.js gives each fetch the proxy
+// they name instead.
+func hostEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		k, v, _ := strings.Cut(e, "=")
+		switch strings.ToUpper(k) {
+		case "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY":
+			out = append(out, "MAGPIE_"+k+"="+v)
+		default:
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Fetch sends r through the provider's plugin — its loader's fetch, or
@@ -416,6 +483,9 @@ func Fetch(ctx context.Context, r FetchRequest) (*http.Response, error) {
 	h, err := get(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if r.Proxy == "" {
+		r.Proxy = proxyOf(ctx)
 	}
 	id, c := h.begin(true)
 	params := struct {

@@ -83,7 +83,9 @@ func parseMarket(b []byte) ([]Listing, error) {
 	}
 	out := r.Plugins[:0]
 	for _, l := range r.Plugins {
-		if l.Package != "" && pkgName.MatchString(l.Package) {
+		// magpie's community's alone: others' OpenCode plugins weren't
+		// written against magpie's sign-ins, and are found by a search
+		if l.Package != "" && pkgName.MatchString(l.Package) && l.Community {
 			if l.Name == "" {
 				l.Name = l.Package
 			}
@@ -428,6 +430,9 @@ func Icon(spec, id string) string {
 			return x.Icon
 		}
 	}
+	if ic, ok := otherIcons[pkg]; ok {
+		return ic
+	}
 	for _, x := range l {
 		for _, p := range x.Providers {
 			if p == id && x.Icon != "" {
@@ -435,5 +440,26 @@ func Icon(spec, id string) string {
 			}
 		}
 	}
+	if ic, ok := otherIcons[id]; ok {
+		return ic
+	}
 	return ""
+}
+
+// otherIcons are the icons of OpenCode plugins the market no longer lists,
+// by package, and of the providers they sign in to, so one installed still
+// shows its vendor's.
+var otherIcons = map[string]string{
+	"opencode-gemini-auth":                "gemini-color",
+	"opencode-antigravity-auth":           "antigravity-color",
+	"opencode-copilot-auth":               "githubcopilot",
+	"opencode-openai-codex-auth":          "openai",
+	"oc-codex-multi-auth":                 "openai",
+	"@ex-machina/opencode-anthropic-auth": "claude-color",
+	"@servoy/opencode-kiro-auth":          "kiro-color",
+	"opencode-qoder-bridge":               "qoder",
+	"google":                              "gemini-color",
+	"github-copilot":                      "githubcopilot",
+	"openai":                              "openai",
+	"anthropic":                           "claude-color",
 }

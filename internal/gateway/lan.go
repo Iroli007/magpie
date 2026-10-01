@@ -1,12 +1,15 @@
 package gateway
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 
@@ -56,9 +59,58 @@ func NewLANKey() string {
 	return "sk-magpie-" + hex.EncodeToString(b)
 }
 
+// publicURL is MAGPIE_PUBLIC_URL, the base URL other machines are told to
+// reach the gateway at, without its trailing slashes: a magpie in a
+// container sees only the container's own addresses, never the host's.
+func publicURL() string { return strings.TrimRight(os.Getenv("MAGPIE_PUBLIC_URL"), "/") }
+
+// lanPublicURL is publicURL with a scheme, as a link needs.
+func lanPublicURL() string {
+	u := publicURL()
+	if u != "" && !strings.Contains(u, "://") {
+		u = "http://" + u
+	}
+	return u
+}
+
+// PublicHost is MAGPIE_PUBLIC_URL's host, "" when it isn't set.
+func PublicHost() string {
+	u, err := url.Parse(lanPublicURL())
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// ContainerAddrs: the addresses magpie finds for itself are a container's,
+// which other machines can't reach, and MAGPIE_PUBLIC_URL doesn't say the
+// host's.
+func ContainerAddrs() bool { return publicURL() == "" && inContainer("/") }
+
+// inContainer: the system under root is a container's — Docker's or
+// Podman's marker file, or a container runtime in PID 1's cgroup.
+func inContainer(root string) bool {
+	for _, f := range []string{".dockerenv", "run/.containerenv"} {
+		if _, err := os.Stat(filepath.Join(root, f)); err == nil {
+			return true
+		}
+	}
+	b, _ := os.ReadFile(filepath.Join(root, "proc/1/cgroup"))
+	for _, w := range []string{"docker", "containerd", "kubepods", "libpod", "lxc"} {
+		if strings.Contains(string(b), w) {
+			return true
+		}
+	}
+	return false
+}
+
 // LANURLs are the addresses other machines on the network reach the
-// gateway at, one per IPv4 address this computer has there.
+// gateway at: MAGPIE_PUBLIC_URL when set, else one per IPv4 address this
+// computer has there.
 func LANURLs() []string {
+	if u := lanPublicURL(); u != "" {
+		return []string{u}
+	}
 	var out []string
 	ifs, _ := net.Interfaces()
 	for _, i := range ifs {
@@ -134,6 +186,7 @@ func lanGuard(next http.Handler) http.Handler {
 			w.Write([]byte(`{"error":{"type":"authentication_error","message":"use the API key shown in magpie's Settings, under Share on local network"}}`))
 			return
 		}
+		r = r.WithContext(context.WithValue(r.Context(), lanKeyed{}, true))
 		r.Header.Set("Authorization", "Bearer "+Token)
 		if r.Header.Get("x-api-key") != "" {
 			r.Header.Set("x-api-key", Token)
@@ -147,6 +200,16 @@ func lanGuard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// lanKeyed marks a request from another machine that carried the key.
+type lanKeyed struct{}
+
+// sharedWith: the request came from another machine with the key, the
+// gateway shared from the Settings page.
+func sharedWith(r *http.Request) bool {
+	ok, _ := r.Context().Value(lanKeyed{}).(bool)
+	return ok
 }
 
 // callerKey is the API key a request carries, however its client sends one.

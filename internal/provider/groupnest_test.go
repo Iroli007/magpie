@@ -10,6 +10,7 @@ import (
 // has one anyway.
 func TestGroupsInGroups(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, id := range []string{"a", "b", "c"} {
 		if err := Save(Provider{ID: id, Name: id, Key: "k", Chat: "http://127.0.0.1:1/v1", Models: []string{"m", "x"}}); err != nil {

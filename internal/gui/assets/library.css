@@ -240,7 +240,19 @@ input.lib-setname:focus { border-color: var(--accent); box-shadow: 0 0 0 3px col
 .lib-empty b { font-weight: 600; font-size: 13px; }
 .lib-empty p { margin: 0 0 8px; font-size: 12px; color: var(--muted); max-width: 380px; line-height: 1.5; }
 .lib-none { padding: 14px; font-size: 12px; color: var(--muted); }
-.lib-skel .row { height: 50px; }
+/* the page in outline while the library loads: it comes in only after a
+   moment, so a quick load goes straight to the page; one sweep of light
+   runs across every bar at once */
+.lib-skel { animation: lib-skel-in .3s var(--ease) .18s both; }
+@keyframes lib-skel-in { from { opacity: 0; } }
+.lib-skel .skeleton { background-color: var(--skel, var(--pill)); background-attachment: fixed; background-size: 200vw 100%; background-repeat: no-repeat; background-position: 20vw 0; animation-name: lib-skel-shift; animation-duration: 1.8s; }
+@keyframes lib-skel-shift { from { background-position: 20vw 0; } to { background-position: -100vw 0; } }
+.lib-skel .who { display: flex; flex-direction: column; gap: 7px; }
+.lib-skel .lib-sk-icon { flex: none; border-radius: 7px; }
+.lib-skel .lib-sk-switch { flex: none; border-radius: 10px; margin-right: 22px; } /* the chevron after it */
+.lib-skel .lib-sk-intro { height: 18px; display: flex; align-items: center; }
+.lib-skel .row-head .skeleton { border-radius: 4px; }
+@media (prefers-reduced-motion: reduce) { .lib-skel, .lib-skel .skeleton { animation: none; } }
 
 /* the dialog */
 .lib-editor .ehead .lib-glyph { width: 24px; height: 24px; }

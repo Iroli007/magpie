@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -165,12 +166,37 @@ func TestPluginProvider(t *testing.T) {
 	mu.Lock()
 	limited = "Bearer k1"
 	mu.Unlock()
+	var staled []string
+	staleAllowance = func(agent, user string) {
+		mu.Lock()
+		staled = append(staled, agent)
+		mu.Unlock()
+		provider.StaleAllowance(agent, user)
+	}
+	defer func() { staleAllowance = provider.StaleAllowance }()
 	code, body := postAs(t, s, "", `{"model":"fakeco/fake-1","messages":[{"role":"user","content":"hello"}]}`)
 	mu.Lock()
 	last := got[len(got)-1]
 	mu.Unlock()
 	if code != 200 || !strings.Contains(body, "hi from chat") || last.auth != "Bearer k2" {
 		t.Fatalf("with the first account limited: %d %s, upstream saw %+v", code, body, last)
+	}
+	// the limited account's allowance is asked again as its usage is kept,
+	// and it rests as that account
+	mu.Lock()
+	asked := slices.Clone(staled)
+	mu.Unlock()
+	if !slices.Contains(asked, "plugin:fakeco") {
+		t.Fatalf("the limited account's allowance went stale as %q, not plugin:fakeco", asked)
+	}
+	restingUntil.Lock()
+	var rests []string
+	for _, r := range restingUntil.note {
+		rests = append(rests, r.agent)
+	}
+	restingUntil.Unlock()
+	if !slices.Contains(rests, "plugin:fakeco") {
+		t.Fatalf("the limited account rests as %q, not plugin:fakeco", rests)
 	}
 
 	if err := plugin.SignOut(ctx, "fakeco", ""); err != nil {

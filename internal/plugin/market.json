@@ -22,23 +22,6 @@
     { "package": "@magpie-community/opencode-kiro-auth", "name": "Kiro", "icon": "kiro-color", "providers": ["kiro"], "community": true, "replaces": "kiro",
       "summary": { "en": "Kiro Free, Pro, Pro+ and Power — Kiro's sign-in, kiro-cli's, or an API key.", "zh": "Kiro Free、Pro、Pro+ 与 Power：Kiro 登录、沿用 kiro-cli 的登录，或 API key。" } },
     { "package": "@magpie-community/opencode-workbuddy-auth", "name": "WorkBuddy", "icon": "workbuddy-color", "providers": ["workbuddy", "workbuddy-ai"], "community": true, "replaces": "workbuddy",
-      "summary": { "en": "WorkBuddy's China build (CodeBuddy plan) and its international build.", "zh": "WorkBuddy 国内版（CodeBuddy 套餐）与国际版。" } },
-
-    { "package": "opencode-gemini-auth", "name": "Gemini", "icon": "gemini-color", "providers": ["google"],
-      "summary": { "en": "Gemini with a Google account — Code Assist and Google AI plans.", "zh": "用 Google 账号使用 Gemini：Code Assist 与 Google AI 套餐。" } },
-    { "package": "opencode-antigravity-auth", "name": "Antigravity", "icon": "antigravity-color", "providers": ["google"],
-      "summary": { "en": "Gemini and Claude through Google Antigravity's sign-in.", "zh": "通过 Google Antigravity 的登录使用 Gemini 和 Claude。" } },
-    { "package": "opencode-copilot-auth", "name": "GitHub Copilot", "icon": "githubcopilot", "providers": ["github-copilot"],
-      "summary": { "en": "Your GitHub Copilot plan, signed in with GitHub's device code.", "zh": "用 GitHub 设备码登录，使用你的 GitHub Copilot 套餐。" } },
-    { "package": "opencode-openai-codex-auth", "name": "ChatGPT (Codex)", "icon": "openai", "providers": ["openai"],
-      "summary": { "en": "ChatGPT Plus and Pro through the Codex backend.", "zh": "通过 Codex 后端使用 ChatGPT Plus / Pro。" } },
-    { "package": "oc-codex-multi-auth", "name": "ChatGPT multi-account", "icon": "openai", "providers": ["openai"],
-      "summary": { "en": "ChatGPT Plus and Pro with several accounts taking turns.", "zh": "多个 ChatGPT Plus / Pro 账号轮换使用。" } },
-    { "package": "@ex-machina/opencode-anthropic-auth", "name": "Claude Pro / Max", "icon": "claude-color", "providers": ["anthropic"],
-      "summary": { "en": "Claude Pro and Max with your Claude account.", "zh": "用 Claude 账号使用 Claude Pro / Max。" } },
-    { "package": "@servoy/opencode-kiro-auth", "name": "Kiro", "icon": "kiro-color", "providers": ["kiro"],
-      "summary": { "en": "Claude models on your AWS Kiro plan.", "zh": "用 AWS Kiro 套餐使用 Claude 模型。" } },
-    { "package": "opencode-qoder-bridge", "name": "Qoder (Agent SDK)", "icon": "qoder", "providers": ["qoder"],
-      "summary": { "en": "Qoder through the official Qoder Agent SDK.", "zh": "通过官方 Qoder Agent SDK 使用 Qoder。" } }
+      "summary": { "en": "WorkBuddy's China build (CodeBuddy plan) and its international build.", "zh": "WorkBuddy 国内版（CodeBuddy 套餐）与国际版。" } }
   ]
 }

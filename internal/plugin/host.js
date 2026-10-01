@@ -46,11 +46,95 @@ const sessions = new Map() // oauth sign-in in progress → its authorize result
 const inflight = new Map() // fetch id → AbortController
 let config = { provider: {} } // what the plugins' config hooks made of it
 
+// ---- a provider's own proxy ---------------------------------------------------
+
+// A request made for a provider or an account with a proxy of its own
+// (#237) goes through it, and so does every fetch the plugin makes for
+// it; one for a provider set to "direct" goes through none. Bun reads
+// *_PROXY once, and a fetch given no proxy option can't be told to skip
+// them, so the host is started with them as MAGPIE_*_PROXY and each
+// fetch is given magpie's own here when it has none of its own.
+// Loopback never goes through one.
+const via = new AsyncLocalStorage() // the proxy: "", "direct" or its URL
+const bunFetch = globalThis.fetch
+
+function proxyVar(k) {
+  return process.env["MAGPIE_" + k] || process.env["MAGPIE_" + k.toLowerCase()] || ""
+}
+
+const globalProxy = {
+  https: proxyVar("HTTPS_PROXY") || proxyVar("ALL_PROXY"),
+  http: proxyVar("HTTP_PROXY") || proxyVar("ALL_PROXY"),
+  no: proxyVar("NO_PROXY")
+    .split(",")
+    .map((s) => s.trim().toLowerCase().replace(/^\*?\./, ""))
+    .filter(Boolean),
+}
+
+function hostOf(input) {
+  try {
+    const u = new URL(typeof input === "string" || input instanceof URL ? input : input.url)
+    return { protocol: u.protocol, host: u.hostname.toLowerCase().replace(/^\[|\]$/g, "") }
+  } catch {
+    return null
+  }
+}
+
+function loopback(host) {
+  return host === "localhost" || host.endsWith(".localhost") || host === "::1" || /^127\./.test(host)
+}
+
+// proxyFor is the proxy a fetch of input goes through, "" for none.
+function proxyFor(input) {
+  const u = hostOf(input)
+  if (!u || loopback(u.host)) return ""
+  const own = via.getStore()
+  if (own === "direct") return ""
+  if (own) return own
+  if (globalProxy.no.some((n) => n === "*" || u.host === n || u.host.endsWith("." + n))) return ""
+  return u.protocol === "https:" ? globalProxy.https : u.protocol === "http:" ? globalProxy.http : ""
+}
+
+// reach is what a check's fetches came to: whether one got an answer, and
+// the first that got none
+const reach = new AsyncLocalStorage()
+
+function sent(input, init) {
+  if (init && "proxy" in init) return bunFetch(input, init)
+  const p = proxyFor(input)
+  return p ? bunFetch(input, { ...init, proxy: p }) : bunFetch(input, init)
+}
+
+globalThis.fetch = Object.assign(function fetch(input, init) {
+  const r = reach.getStore()
+  if (!r) return sent(input, init)
+  return sent(input, init).then(
+    (res) => ((r.reached = true), res),
+    (e) => {
+      r.failed ??= e
+      throw e
+    },
+  )
+}, bunFetch)
+
 // ---- auth.json ---------------------------------------------------------------
 
 function readAuth() {
+  let text
+  for (let i = 0; ; i++) {
+    try {
+      text = fs.readFileSync(authPath, "utf8")
+      break
+    } catch (e) {
+      if (e?.code === "ENOENT") return {}
+      // Windows refuses a file being renamed over for a moment: read as
+      // none, the next setAuth would write the others' accounts away
+      if (i >= 50) throw e
+      pause(10)
+    }
+  }
   try {
-    const v = JSON.parse(fs.readFileSync(authPath, "utf8"))
+    const v = JSON.parse(text)
     return v && typeof v === "object" ? v : {}
   } catch {
     return {}
@@ -61,7 +145,19 @@ function writeAuth(all) {
   fs.mkdirSync(path.dirname(authPath), { recursive: true })
   const tmp = authPath + ".tmp-" + process.pid
   fs.writeFileSync(tmp, JSON.stringify(all, null, 2) + "\n", { mode: 0o600 })
-  fs.renameSync(tmp, authPath)
+  // and a file held open by a reader refuses to be renamed over
+  for (let i = 0; ; i++) {
+    try {
+      return fs.renameSync(tmp, authPath)
+    } catch (e) {
+      if (i >= 50 || !["EPERM", "EACCES", "EBUSY"].includes(e?.code)) throw e
+      pause(10)
+    }
+  }
+}
+
+function pause(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
 function setAuth(key, info) {
@@ -308,7 +404,7 @@ async function loadPlugins(list) {
         if (fns.length) break
       }
       if (fns.length === 0) throw new Error("exports no OpenCode plugin function")
-      for (const fn of fns) hooks.push({ spec: p.spec, hooks: (await fn(input, p.options)) ?? {} })
+      for (const fn of fns) hooks.push({ spec: p.spec, target: p.target, hooks: (await fn(input, p.options)) ?? {} })
       loaded.push({ spec: p.spec })
     } catch (e) {
       loaded.push({ spec: p.spec, error: String(e?.stack ?? e) })
@@ -329,7 +425,7 @@ async function loadPlugins(list) {
 // winning, as in OpenCode.
 function auths() {
   const m = new Map()
-  for (const h of hooks) if (h.hooks.auth?.provider) m.set(h.hooks.auth.provider, { spec: h.spec, auth: h.hooks.auth })
+  for (const h of hooks) if (h.hooks.auth?.provider) m.set(h.hooks.auth.provider, { spec: h.spec, target: h.target, auth: h.hooks.auth })
   return m
 }
 
@@ -434,13 +530,22 @@ async function info(id, key, strict) {
   for (const h of hooks) {
     const ph = h.hooks.provider
     if (ph?.id !== id || typeof ph.models !== "function") continue
+    const all = readAuth()
+    const k = key ?? accountsOf(all, id)[0] ?? id
     try {
-      const all = readAuth()
-      const k = key ?? accountsOf(all, id)[0] ?? id
       const next = await inScope(id, k, () => ph.models(JSON.parse(JSON.stringify(out)), { auth: all[k] }))
       out.models = Object.fromEntries(Object.entries(next ?? {}).map(([k, m]) => [k, { ...m, id: k, providerID: id }]))
     } catch (e) {
-      if (strict) throw e
+      // an error the models hook throws may say what it means for the
+      // sign-in, as an answer's X-Magpie-Sign-In does: a built-in whose
+      // model list the vendor refused marked the account
+      if (["expired", "kept", "renewed"].includes(e?.signIn) && all[k]) send({ event: "signIn", provider: id, account: k, said: e.signIn })
+      // strict (a move's check) fails on what the account can't do, but
+      // a sign-in the vendor refused isn't that: it is marked, as the
+      // built-in marked it, and goes along untried, as a lapsed one does
+      if (strict && !(e?.signIn === "expired" && all[k])) throw e
+      const r = reach.getStore()
+      if (r && e?.signIn === "expired") r.refused ??= e?.message ?? String(e)
       send({ event: "log", level: "error", message: `${h.spec}: provider.models: ${e?.message ?? e}` })
     }
   }
@@ -448,8 +553,35 @@ async function info(id, key, strict) {
   return out
 }
 
+// shown is a plugin's string as magpie shows it: trimmed and at most n
+// characters, "" for anything else.
+const shown = (v, n) => (typeof v === "string" ? v.trim().slice(0, n) : "")
+
+// methods are the auth hook's ways to sign in. An "api" one may say what
+// its key looks like (placeholder, magpie's own: OpenCode's dialog says
+// "API key"); its label titles the key's field, as OpenCode's does.
 function methods(auth) {
-  return (auth.methods ?? []).map((m) => ({ type: m.type, label: m.label }))
+  return (auth.methods ?? []).map((m) => ({
+    type: m.type,
+    label: m.label,
+    ...(m.type === "api" && shown(m.placeholder, 200) ? { placeholder: shown(m.placeholder, 200) } : {}),
+  }))
+}
+
+// iconOf is the picture a plugin gives its provider, magpie's own field
+// (OpenCode's providers have none): the auth hook's icon, else
+// package.json's magpie.icon. An https URL or a data:image URI; magpie
+// checks and keeps it (internal/provider), nothing is fetched here.
+function iconOf(a) {
+  const ok = (v) => {
+    const s = typeof v === "string" ? v.trim() : ""
+    // a data URI of a picture over 1 MB, magpie's most, isn't carried
+    return s.length <= 3 << 19 && /^(https:\/\/|data:image\/)/i.test(s) ? s : ""
+  }
+  const own = ok(a.auth.icon)
+  if (own || !a.target) return own
+  const dir = fs.statSync(a.target, { throwIfNoEntry: false })?.isDirectory() ? a.target : path.dirname(a.target)
+  return ok(readJSON(path.join(dir, "package.json"))?.magpie?.icon)
 }
 
 async function providers() {
@@ -458,6 +590,13 @@ async function providers() {
   for (const [id, a] of auths()) {
     const keys = accountsOf(stored, id)
     const p = await info(id)
+    // each account's own models, as the built-ins read each account's: a
+    // plan may serve fewer, or others, than the first account's. One that
+    // can't be read is taken to have them all.
+    const own = await Promise.all(keys.slice(1).map((k) => info(id, k, true).catch(() => null)))
+    const models = { ...p.models }
+    for (const q of own) for (const [k, m] of Object.entries(q?.models ?? {})) models[k] ??= m
+    const ids = (q) => Object.values(q.models).filter((m) => m.status !== "deprecated").map((m) => m.id)
     const first = stored[keys[0]]
     out.push({
       id,
@@ -466,12 +605,19 @@ async function providers() {
       npm: p.npm ?? "",
       api: p.api ?? "",
       methods: methods(a.auth),
+      icon: iconOf(a),
       usage: typeof a.auth.usage === "function",
       signedIn: keys.length > 0,
       authType: first?.type ?? "",
       accountId: whoOf(first),
-      accounts: keys.map((k) => ({ key: k, type: stored[k]?.type ?? "", accountId: whoOf(stored[k]), hint: hintOf(stored[k]) })),
-      models: Object.values(p.models)
+      accounts: keys.map((k, i) => ({
+        key: k,
+        type: stored[k]?.type ?? "",
+        accountId: whoOf(stored[k]),
+        hint: hintOf(stored[k]),
+        models: own.length === 0 ? undefined : i === 0 ? ids(p) : own[i - 1] ? ids(own[i - 1]) : undefined,
+      })),
+      models: Object.values(models)
         .filter((m) => m.status !== "deprecated")
         .map((m) => ({
           id: m.id,
@@ -484,6 +630,7 @@ async function providers() {
           output: m.limit?.output ?? 0,
           reasoning: !!m.capabilities?.reasoning,
           image: !!m.capabilities?.input?.image,
+          imageSaid: typeof m.capabilities?.input?.image === "boolean",
           released: m.release_date ?? "",
           cost: m.cost,
           variants: Object.keys(m.variants ?? {}),
@@ -644,10 +791,18 @@ async function load({ provider, account }) {
 //       resetSecs?, display?, span? (seconds the window runs), model? (a
 //       word in the ids of the only models it counts), models? / notModels?
 //       (the ids it counts, or all but these), aside? (using it up doesn't
-//       stop the account) }]
+//       stop the account) }],
+//     signIn?: "expired" | "kept" | "renewed" (what the read means for the
+//       account's sign-in, as a model request's X-Magpie-Sign-In says;
+//       without it an error saying to sign in again marks the account and
+//       a clean read clears it)
 //   }
 // Run in the account's scope, a token it renews is saved to that account.
-async function usage({ provider, account }) {
+async function usage({ provider, account, proxy }) {
+  return via.run(proxy ?? "", () => usageOf(provider, account))
+}
+
+async function usageOf(provider, account) {
   const a = auths().get(provider)?.auth
   if (typeof a?.usage !== "function") throw new Error(`${provider}'s plugin doesn't tell its usage`)
   const key = accountKey(provider, account)
@@ -669,6 +824,7 @@ async function usage({ provider, account }) {
     balance: text(u.balance),
     error: text(u.error),
     user: text(u.user),
+    signIn: ["expired", "kept", "renewed"].includes(u.signIn) ? u.signIn : "",
     resets:
       u.resets && typeof u.resets === "object"
         ? { count: num(u.resets.count), until: when(u.resets.until), byWindow: !!u.resets.byWindow, fiveHour: num(u.resets.fiveHour), weekly: num(u.resets.weekly) }
@@ -696,9 +852,22 @@ function sdkHeaders(npm, key) {
   return { authorization: `Bearer ${key}` }
 }
 
+// bodyOf is the body as OpenCode hands it to a plugin's fetch: the string
+// the AI SDK built, as the plugins reshape only a string body. One that
+// isn't UTF-8 text stays bytes.
+function bodyOf(b64) {
+  if (!b64) return undefined
+  const b = Buffer.from(b64, "base64")
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(b)
+  } catch {
+    return b
+  }
+}
+
 async function doFetch(id, params) {
   const key = accountKey(params.provider, params.account)
-  return inScope(params.provider, key, () => fetchAs(id, key, params))
+  return via.run(params.proxy ?? "", () => inScope(params.provider, key, () => fetchAs(id, key, params)))
 }
 
 async function fetchAs(id, key, { provider, model, npm, url, method, headers, body, session }) {
@@ -737,7 +906,7 @@ async function fetchAs(id, key, { provider, model, npm, url, method, headers, bo
     const res = await f(url, {
       method: method ?? "POST",
       headers: h,
-      body: body ? Buffer.from(body, "base64") : undefined,
+      body: bodyOf(body),
       signal: ctl.signal,
     })
     const rh = {}
@@ -776,12 +945,21 @@ const handlers = {
   load,
   usage,
   // check tries one account as a request would: its loader, then its
-  // models as the plugin lists them for it
+  // models as the plugin lists them for it, then its usage, which asks the
+  // vendor of the account itself. refused is the models hook saying the
+  // vendor turned the sign-in away. A models hook may fall back to a list
+  // it keeps when the vendor can't be reached, so a check that reached
+  // none of the places it asked proves nothing, and fails.
   async check(p) {
     const key = accountKey(p.provider, p.account)
-    await load({ provider: p.provider, account: key })
-    const pi = await info(p.provider, key, true)
-    return { models: Object.keys(pi.models) }
+    const r = { reached: false, failed: null, refused: null }
+    return via.run(p.proxy ?? "", () => reach.run(r, async () => {
+      await load({ provider: p.provider, account: key })
+      const pi = await info(p.provider, key, true)
+      const u = typeof auths().get(p.provider)?.auth?.usage === "function" ? await usageOf(p.provider, key) : null
+      if (r.failed && !r.reached) throw new Error(`couldn't reach ${pi.name}: ${r.failed?.message ?? r.failed}`)
+      return { models: Object.keys(pi.models), usage: u, refused: r.refused ?? "" }
+    }))
   },
   // import keeps a sign-in made elsewhere (a built-in subscription's, moved
   // onto its plugin) as one more account, or as the account it already is

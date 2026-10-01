@@ -97,6 +97,13 @@ type Provider struct {
 	// ignore them: their auth is the agent's own.
 	Headers map[string]string `json:"headers,omitempty"`
 
+	// Searches says the vendor answers a web search tool offered on its
+	// Anthropic or Responses API by itself (web_search_20250305,
+	// web_search): a relay in front of Anthropic's or OpenAI's API, which
+	// magpie can't tell from its host. A request offering one then goes to
+	// it as the client sent it, rather than given magpie's search (#359).
+	Searches bool `json:"searches,omitempty"`
+
 	// Proxy is the proxy magpie's requests to this provider go through
 	// (#237: Codex through one, a vendor at home without): "" follows
 	// the global one (Settings' Proxy, the environment's, the system's),
@@ -427,6 +434,7 @@ func AddCopy(p Provider, from string) (string, error) {
 		p.Fallback = slices.Clone(src.Fallback)
 	}
 	p.Unlisted = p.Unlisted || src.Unlisted
+	p.Searches = p.Searches || src.Searches
 	if p.Website == "" {
 		p.Website = src.Website
 	}
@@ -481,7 +489,7 @@ func freeName(name string) string {
 }
 
 // accountIDs are the ids of the subscriptions magpie can list (account.go).
-var accountIDs = []string{"antigravity", "claude", "codex", CommandCodePlanID, "copilot", "cursor", "devin", "factory", "gemini", "grok", "kiro", MiMoID, "qoder", "workbuddy", WorkBuddyAIID, "zcode", "zed"}
+var accountIDs = []string{"antigravity", "claude", "codex", CommandCodePlanID, "copilot", "cursor", "devin", "factory", "gemini", "grok", "kiro", MiMoID, "qoder", QoderCNID, "workbuddy", WorkBuddyAIID, "zcode", "zed"}
 
 func stored(id string) bool {
 	for _, p := range load().Providers {
@@ -539,8 +547,10 @@ func ShowAccount(id string) error {
 // Delete removes a provider. An account is only hidden from magpie (its
 // model picks kept); signing out is the agent's job.
 func Delete(id string) error {
-	if p, ok := find(Accounts(), id); ok && p.IsPlugin() {
-		// a plugin's sign-in is magpie's own: removing it signs out
+	if p, ok := find(Accounts(), id); ok && p.IsPlugin() && !Moved(p.Account.plugin.ID) {
+		// a plugin's sign-in is magpie's own: removing it signs out. A
+		// built-in moved onto its plugin is only hidden, as the built-in
+		// was, its accounts and model picks kept.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		return plugin.SignOut(ctx, p.Account.plugin.ID, "")
@@ -782,6 +792,9 @@ func (p Provider) Native(model string) Protocol {
 
 // Host is the vendor's API host, for display.
 func (p Provider) Host() string {
+	if p.Account != nil && p.Account.moved {
+		return p.Account.wasHost // not plugin://<id>
+	}
 	for _, pr := range p.Speaks() {
 		if u := p.Base(pr); u != "" {
 			return HostOf(u)

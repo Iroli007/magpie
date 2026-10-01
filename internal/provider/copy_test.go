@@ -14,6 +14,7 @@ func TestAddCopy(t *testing.T) {
 	isolate(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	src := Provider{ID: "relay", Name: "Relay", Chat: "https://api.relay.example/v1", Key: "sk-1", KeyName: "main",

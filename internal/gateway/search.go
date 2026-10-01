@@ -61,7 +61,13 @@ func searchFor(ctx context.Context) *CallFor {
 // asked on this API.
 func searchesItself(p provider.Provider, proto provider.Protocol) bool {
 	if p.Account != nil {
-		return (p.Account.Agent == "codex" || p.Account.Agent == "grok") && proto == provider.Responses
+		// Grok by its id: moved to its plugin, its account is the plugin's
+		return (p.Account.Agent == "codex" || p.ID == "grok") && proto == provider.Responses
+	}
+	// a relay said to search (#359), on an API it has an address for: one
+	// with only a Chat address would be sent no search tool at all
+	if p.Searches && (proto == provider.Anthropic || proto == provider.Responses) && p.Base(proto) != "" {
+		return true
 	}
 	return slices.Contains(searchHosts[proto], provider.HostOf(p.Base(proto)))
 }
@@ -88,9 +94,12 @@ func searchAsked(proto provider.Protocol, body []byte) bool {
 
 // searcher is the model magpie searches with: the first of the providers
 // that search by themselves, with a small model of theirs, as searching
-// needs no more.
+// needs no more. A relay said to search is left out: it would spend the
+// relay's quota on other models' searches, and one that serves only Claude
+// Code refuses magpie's own request, which has no metadata.user_id (#359).
 func searcher() (provider.Provider, string, bool) {
 	rank := func(p provider.Provider) int {
+		p.Searches = false
 		switch {
 		case p.Account != nil && p.Account.Agent == "claude":
 			return 0
@@ -262,7 +271,7 @@ type round func(ctx context.Context, req *Request) (<-chan Event, int, string)
 // reply. The first round's failure is a status, as another provider may
 // take over.
 func (s *Server) searchReply(w http.ResponseWriter, r *http.Request, from provider.Protocol, name string, req *Request, usage *Usage, ask round) (int, string) {
-	ctx, cancel := context.WithCancel(context.WithValue(r.Context(), searchForKey{}, &CallFor{Agent: agentOf(r), Model: unprefixed(req.Model)}))
+	ctx, cancel := context.WithCancel(context.WithValue(r.Context(), searchForKey{}, &CallFor{Agent: callerOf(r).agent, Model: unprefixed(req.Model)}))
 	defer cancel()
 	q := *req
 	q.WebSearch = false

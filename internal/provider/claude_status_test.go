@@ -12,9 +12,11 @@ import (
 // its saved login is, so it is the one Active and not also served beside
 // itself; the env magpie runs in is not handed to the CLI (#177).
 func TestClaudeAccountNamedAsItsLogin(t *testing.T) {
+	shellFakes(t)
 	isolate(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "magpie")
@@ -55,6 +57,7 @@ func TestClaudeAccountNamedAsItsLogin(t *testing.T) {
 // a second look at Claude Code's sign-in serves the last answer at once and
 // asks the CLI again behind it (#123)
 func TestClaudeIdentityServedWhileAsked(t *testing.T) {
+	shellFakes(t)
 	dir := t.TempDir()
 	exe, who := filepath.Join(dir, "claude"), filepath.Join(dir, "who")
 	os.WriteFile(who, []byte("a@example.com"), 0o600)

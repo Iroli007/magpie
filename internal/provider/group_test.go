@@ -36,6 +36,7 @@ func TestAutoGroupsSameModel(t *testing.T) {
 // the one that answers.
 func TestGroupImages(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
 	e := func(p, m string, images bool) Entry {
 		return Entry{ID: p + "/" + m, Model: m, Name: m, Provider: Provider{ID: p}, Images: images}
@@ -55,6 +56,7 @@ func TestGroupImages(t *testing.T) {
 
 func TestGroupImagesKeepUnknownMemberUnknown(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
 	yes := true
 	entries := []Entry{

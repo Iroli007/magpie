@@ -86,10 +86,6 @@ type Settings struct {
 	// used up and no other account can take the request: at most one a
 	// week each (see provider.AutoUseCodexReset).
 	CodexAutoReset []string `json:"codexAutoReset,omitempty"`
-	// ClaudeAutoReset are the Claude accounts (lower-case) that spend one
-	// of their usage-limit resets by themselves the same way (see
-	// provider.AutoUseClaudeReset).
-	ClaudeAutoReset []string `json:"claudeAutoReset,omitempty"`
 	// WorkBuddyCheckin presses WorkBuddy's daily check-in (签到) for each
 	// signed-in WorkBuddy (China) account once a Beijing day, claiming the
 	// credits it gives while its event runs.
@@ -97,6 +93,12 @@ type Settings struct {
 	// NoStats stops the one event a day that counts magpie's users (see
 	// internal/stats).
 	NoStats bool `json:"noStats,omitempty"`
+	// NoUpdatePill keeps the header's Update pill away when a newer magpie
+	// is out; UpdateSkip is the one version it was hidden for, and a newer
+	// one brings it back. Either way magpie still downloads the version and
+	// puts it in as it quits, and Settings' version row still offers it.
+	NoUpdatePill bool   `json:"noUpdatePill,omitempty"`
+	UpdateSkip   string `json:"updateSkip,omitempty"`
 	// Vision is the model that describes an image to a model that can't see
 	// it: a model's id (provider/model, group/<id>), "off" to turn such an
 	// image away, or empty for one magpie picks (see gateway.seer).
@@ -104,6 +106,8 @@ type Settings struct {
 	// ImageGen is the model magpie's generate_image tool draws with (the
 	// gateway's /v1/images/generations when a request names no model): a
 	// model's id, "off", or empty for one magpie picks (gateway.drawer).
+	// "off" turns the video a request that names no model gets off too
+	// (gateway.videomaker).
 	ImageGen string `json:"imageGen,omitempty"`
 	// TrayUsages are the subscriptions and plans whose windows are shown
 	// beside the tray icon, in the order shown, each by its provider and
@@ -116,9 +120,22 @@ type Settings struct {
 	// TrayUsageEvery is how often, in minutes, that text is brought up to
 	// date; 0 is every 3 (one of TrayEvery).
 	TrayUsageEvery int `json:"trayUsageEvery,omitempty"`
+	// TrayNoLogos draws the Mac menu bar's cards without their logos: each
+	// is its windows stacked alone, a thin line between one card and the
+	// next.
+	TrayNoLogos bool `json:"trayNoLogos,omitempty"`
 	// QuotaLeft shows a subscription's windows by how much of each is left,
 	// not used: the Usage page, the tray panel and the menu bar alike.
 	QuotaLeft bool `json:"quotaLeft,omitempty"`
+	// UsageAlert is how much of a subscription's or plan's window, in
+	// percent, is used when magpie says so with a notification (#368):
+	// once for each time the window runs, for every window routing counts
+	// (not one set aside, as on-demand spending is); 0 is off.
+	UsageAlert int `json:"usageAlert,omitempty"`
+	// BalanceAlert is the balance a key or account has fallen to when
+	// magpie says so, in that balance's own currency or credits, once until
+	// it is topped up past it again; 0 is off.
+	BalanceAlert float64 `json:"balanceAlert,omitempty"`
 	// PlainNames has the model lists magpie gives agents name each model
 	// by its name alone, without its provider's or "routing group" after it
 	// (#335) — but for two in one list that would read the same, which keep
@@ -173,6 +190,22 @@ type Settings struct {
 	// resells at a multiplier, is otherwise priced at whatever its maker's
 	// list price is.
 	ModelPrices map[string]ModelPrice `json:"modelPrices,omitempty"`
+	// ModelOutputs is the most a reply of a model may hold, by "<provider
+	// id>/<model id>", and "*" for every model of that provider. Absent
+	// leaves it to the vendor's own list and to models.dev, as a context
+	// the user has not set is. A model's own value wins over its
+	// provider's, and the agents' own files are told of either
+	// (see provider.SetModelOutput).
+	ModelOutputs map[string]int `json:"modelOutputs,omitempty"`
+	// ModelWires is the name to send a vendor for a model magpie knows by
+	// another, by "<provider id>/<model id>", and "*" for every model of that
+	// provider. A "*" in the name is the model itself, so one name covers a
+	// relay that namespaces its models — vendor-c/* asks for model-3 as
+	// vendor-c/model-3 — while a name with no "*" in it sends every model of
+	// that key under that one name. Everything else — the catalog agents see,
+	// the routing groups, the usage records and what a call is priced at —
+	// keeps the name magpie knows the model by.
+	ModelWires map[string]string `json:"modelWires,omitempty"`
 	// The main window's size when it was last resized, width and height,
 	// so it opens at it again after a restart.
 	Window []int `json:"window,omitempty"`
@@ -301,11 +334,11 @@ var providerID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 // (vendor/model), so only the first one ends the provider's id. what names
 // the setting being checked, for the error.
 //
-// Nothing in this change calls it yet: it is the entry point for the three
-// changes stacked on this one — a model's price, its output limit, its wire
-// name — which take model keys from the user and check them here rather than
-// each spelling the key's shape out again. It is kept here, on the branch
-// they build on, so that it stays one rule and not three.
+// It is the one rule a model key is held to, and it lives here, beside the
+// maps it keys. Every change that takes such a key from the user checks it
+// here rather than spelling the shape out again, so what is written into a
+// map and what is refused come out of the same rule — one rule, and not one
+// each branch can drift from on its own.
 func CheckModelKey(what, key string) error {
 	pid, model, ok := strings.Cut(key, "/")
 	if !ok || model == "" {
@@ -467,6 +500,12 @@ func Save(s Settings) error {
 	if !slices.Contains(TrayEvery, s.TrayUsageEvery) {
 		return fmt.Errorf("the menu bar's usage is refreshed every %v minutes, not %d", TrayEvery, s.TrayUsageEvery)
 	}
+	if s.UsageAlert < 0 || s.UsageAlert > 100 {
+		return fmt.Errorf("a usage alert is at a percentage from 1 to 100, or 0 for off, not %d", s.UsageAlert)
+	}
+	if math.IsNaN(s.BalanceAlert) || math.IsInf(s.BalanceAlert, 0) || s.BalanceAlert < 0 {
+		return fmt.Errorf("a balance alert is at an amount of 0 or more (0 for off), not %v", s.BalanceAlert)
+	}
 	if !slices.Contains(TextSizes, s.TextSize) {
 		return fmt.Errorf("text size must be one of %v percent, not %d", TextSizes, s.TextSize)
 	}
@@ -493,10 +532,6 @@ func Save(s Settings) error {
 		s.CodexAutoReset[i] = strings.ToLower(u)
 	}
 	s.CodexAutoReset = ids(s.CodexAutoReset)
-	for i, u := range s.ClaudeAutoReset {
-		s.ClaudeAutoReset[i] = strings.ToLower(u)
-	}
-	s.ClaudeAutoReset = ids(s.ClaudeAutoReset)
 	s.TrayUsage = ""
 	if len(s.TrayUsages) > 0 {
 		s.TrayUsage = s.TrayUsages[0]

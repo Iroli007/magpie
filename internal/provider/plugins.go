@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/plugin"
@@ -151,12 +152,34 @@ func pluginCatalog(pp plugin.Provider) []catalog.Model {
 		if m.Reasoning {
 			c.Efforts = m.Variants
 		}
-		if m.Cost != nil {
+		// a built-in moved onto its plugin keeps the levels it had for a
+		// model its vendor gives none: its maker's, as effortsOf borrows
+		if len(c.Efforts) == 0 && Moved(pp.ID) {
+			c.Efforts = borrowedEfforts(m.ID)
+		}
+		// OpenCode's price of a model it has none for is 0, as the
+		// plugins give a plan's models: a price is only one above it
+		if m.Cost != nil && (m.Cost.Input > 0 || m.Cost.Output > 0) {
 			c.Price = &catalog.Price{Input: m.Cost.Input, Output: m.Cost.Output}
+		}
+		if m.ImageSaid {
+			c.ImageInput = &m.Image
 		}
 		out = append(out, c)
 	}
 	return out
+}
+
+// pluginAccountCatalog is what the account at key serves: its own list
+// when the plugin told one, as the built-ins read each account's.
+func pluginAccountCatalog(pp plugin.Provider, key string) []catalog.Model {
+	all := pluginCatalog(pp)
+	for _, a := range pp.Accounts {
+		if a.Key == key && a.Models != nil {
+			return slices.DeleteFunc(all, func(m catalog.Model) bool { return !slices.Contains(a.Models, m.ID) })
+		}
+	}
+	return all
 }
 
 // pluginProvider is the provider as one of its accounts, l as the
@@ -171,9 +194,9 @@ func pluginProvider(pp plugin.Provider, l pluginLogin) Provider {
 	a := &Account{Agent: "plugin", User: user, Plan: l.Plan, Stream: true, plugin: &pp, pluginKey: acct.Key}
 	a.models = func() []catalog.Model {
 		if cur, ok := PluginOf(id); ok {
-			return pluginCatalog(cur)
+			return pluginAccountCatalog(cur, acct.Key)
 		}
-		return pluginCatalog(pp)
+		return pluginAccountCatalog(pp, acct.Key)
 	}
 	a.fetch = func(ctx context.Context) ([]catalog.Model, error) {
 		ps, err := plugin.Providers(ctx)
@@ -182,16 +205,24 @@ func pluginProvider(pp plugin.Provider, l pluginLogin) Provider {
 		}
 		for _, cur := range ps {
 			if cur.ID == pp.ID {
-				return catalog.Chat(pluginCatalog(cur)), nil
+				return catalog.Chat(pluginAccountCatalog(cur, acct.Key)), nil
 			}
 		}
 		return nil, fmt.Errorf("%s's plugin no longer lists it", name)
 	}
 	a.sign = func(ctx context.Context, req *http.Request, body []byte) error { return nil }
 	a.transport = func(req *http.Request) (*http.Response, error) { return pluginFetch(pp, acct.Key, req) }
-	p := Provider{ID: id, Name: name, Icon: plugin.Icon(pp.Spec, pp.ID), Account: a}
+	p := Provider{ID: id, Name: name, Icon: PluginIcon(pp), Account: a}
 	if c, ok := movedCards[pp.ID]; ok && Moved(pp.ID) {
-		p.Icon, p.Website = c.icon, c.site // as the built-in was
+		p.Name, p.Icon, p.Website = c.name, c.icon, c.site // as the built-in was
+		m, _ := MigrationOf(pp.ID)
+		a.moved, a.wasHost = true, m.Host
+		if a.wasHost == "" { // moved before the move kept it
+			a.wasHost = builtinHost(pp.ID)
+		}
+		if n, ok := movedNames[pp.ID]; ok {
+			p.Name = n
+		}
 	}
 	for _, m := range pp.Models {
 		switch pluginProtocol(pp.ID, m) {
@@ -294,9 +325,61 @@ func pluginFetch(pp plugin.Provider, account string, req *http.Request) (*http.R
 		Headers: h, Body: body, Session: req.Header.Get(ConversationHeader),
 	})
 	if err == nil {
-		notePluginLapse(pp, account, resp.StatusCode)
+		notePluginSignIn(pp, account, resp)
 	}
 	return resp, err
+}
+
+// SignInHeader is how a plugin says what its answer means for the
+// account's sign-in, whatever its status, so it can answer with the
+// status its built-in did: "expired" marks the account lapsed, as a
+// built-in whose vendor refused the sign-in marked it, though the status
+// be a 502; "kept" leaves the account as it is, as a built-in answering a
+// 401 of the vendor's without its sign-in refused did; "renewed" clears
+// the mark, as a built-in whose sign-in renewed took it off whatever the
+// request then met. Without it a 401 marks the account and a success
+// clears the mark.
+const SignInHeader = "X-Magpie-Sign-In"
+
+// notePluginSignIn marks or clears an account's lapse as the plugin's
+// answer says, and takes SignInHeader off it.
+func notePluginSignIn(pp plugin.Provider, account string, resp *http.Response) {
+	said := strings.ToLower(strings.TrimSpace(resp.Header.Get(SignInHeader)))
+	resp.Header.Del(SignInHeader)
+	notePluginSaid(pp, account, said, resp.StatusCode)
+}
+
+// notePluginSaid marks or clears an account's lapse as the plugin said
+// ("expired", "kept", "renewed"), or, when it said nothing, as status
+// reads: a 401 marks it and a success clears it.
+func notePluginSaid(pp plugin.Provider, account, said string, status int) {
+	switch said {
+	case "expired":
+		notePluginLapse(pp, account, http.StatusUnauthorized)
+	case "renewed":
+		notePluginLapse(pp, account, http.StatusOK)
+	case "kept":
+	default:
+		notePluginLapse(pp, account, status)
+	}
+}
+
+func init() {
+	// a models hook saying its account's sign-in expired marks it, as a
+	// built-in whose model list the vendor refused marked the account
+	plugin.OnSignIn(func(id, account, said string) {
+		pp, ok := pluginOfAgent("plugin:" + id)
+		if !ok {
+			// told while the providers were first read: wait for them
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			_, _ = plugin.Providers(ctx)
+			if pp, ok = pluginOfAgent("plugin:" + id); !ok {
+				pp = plugin.Provider{ID: id}
+			}
+		}
+		notePluginSaid(pp, account, said, 0)
+	})
 }
 
 func modelAPIID(m plugin.Model) string {

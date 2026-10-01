@@ -187,6 +187,8 @@ func StaleAllowance(agent, user string) {
 	loginUsageCache.Lock()
 	delete(loginUsageCache.m, agent+"/"+strings.ToLower(user))
 	loginUsageCache.Unlock()
+	// the built-in keeps Grok's usage by home; a Grok moved to its plugin
+	// keeps it as "plugin:grok"'s, the line above
 	if agent == "grok" {
 		gs := grokLogins()
 		grokHomeUsage.Lock()

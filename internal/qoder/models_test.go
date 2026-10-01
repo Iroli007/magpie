@@ -13,7 +13,7 @@ func TestParseModelsFree(t *testing.T) {
 		{"key":"paid","enable":true,"is_free":false,"price_factor":0.5},
 		{"key":"unsaid","enable":true}
 	]}`)
-	ms, err := ParseModels(body)
+	ms, err := ParseModels(body, ProviderKey)
 	if err != nil {
 		t.Fatal(err)
 	}

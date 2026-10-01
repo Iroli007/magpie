@@ -14,11 +14,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 
+	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/provider"
+	"gopkg.in/yaml.v3"
 )
 
 // ompEfforts are the thinking levels omp knows.
@@ -236,7 +239,7 @@ func omp(home string) *Agent {
 				return dropMagpie()
 			},
 			Options: func(cur map[string]string) []Option {
-				opts := append(ownOptions("", cur[key]), viaMagpie("omp", magpieID+"/")...)
+				opts := append(ompOwnOptions(pick("models"), cur[key]), viaMagpie("omp", magpieID+"/")...)
 				// a catalog model with a thinking level is offered as it
 				// reads, beside the model: that keeps the level, the model
 				// alone clears it
@@ -429,4 +432,72 @@ func ompProvider() ompProviderEntry {
 	}
 	return ompProviderEntry{BaseURL: gatewayV1(), API: "openai-completions", Auth: "none",
 		Headers: map[string]string{"User-Agent": "omp"}, Models: ms}
+}
+
+// ompOwnOptions lists the models of the providers the user added to omp's
+// models.yml, then the ones models.dev knows for the current value's
+// provider, spelled as ownOptions spells them (the model's name as the
+// note). A value offered twice is offered once, with the name and icon
+// either one had. A provider in both stays one group, where it first comes:
+// the picker draws a heading at each change of group. A provider with only
+// discovery has its models listed by omp asking it at run time, out of
+// magpie's sight, so it offers none here.
+func ompOwnOptions(modelsFile, cur string) []Option {
+	var f struct {
+		Providers map[string]struct {
+			Models []struct {
+				ID   string `yaml:"id"`
+				Name string `yaml:"name"`
+			} `yaml:"models"`
+		} `yaml:"providers"`
+	}
+	if b, err := os.ReadFile(modelsFile); err == nil {
+		yaml.Unmarshal(b, &f)
+	}
+	providers := make([]string, 0, len(f.Providers))
+	for p := range f.Providers {
+		if p != magpieID {
+			providers = append(providers, p)
+		}
+	}
+	sort.Strings(providers)
+	var opts []Option
+	for _, p := range providers {
+		name := catalog.ProviderName(p)
+		if name == "" {
+			name = p
+		}
+		for _, m := range f.Providers[p].Models {
+			if m.ID != "" {
+				opts = append(opts, Option{Value: p + "/" + m.ID, Note: m.Name, Icon: modelIcon(p, m.ID), Group: name, GroupIcon: providerIcon(p)})
+			}
+		}
+	}
+	at := map[string]int{}
+	var out []Option
+	for _, o := range append(opts, ownOptions("", cur)...) {
+		i, dup := at[o.Value]
+		if !dup {
+			at[o.Value] = len(out)
+			out = append(out, o)
+			continue
+		}
+		if out[i].Note == "" {
+			out[i].Note = o.Note
+		}
+		if out[i].Icon == "" {
+			out[i].Icon = o.Icon
+		}
+		if out[i].GroupIcon == "" {
+			out[i].GroupIcon = o.GroupIcon
+		}
+	}
+	first := map[string]int{}
+	for i, o := range out {
+		if _, ok := first[o.Group]; !ok {
+			first[o.Group] = i
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return first[out[i].Group] < first[out[j].Group] })
+	return out
 }

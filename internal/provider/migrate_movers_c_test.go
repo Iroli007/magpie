@@ -2,8 +2,11 @@ package provider
 
 import (
 	"encoding/json"
+	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/update"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -63,15 +66,16 @@ func TestKiroMover(t *testing.T) {
 	}
 
 	ms := movingOf(t, "kiro")
-	if k := ms["Kiro API key"]; !k.First || k.Auth["type"] != "api" || k.Auth["key"] != "ksk_1" {
+	if k := ms["Kiro API key"]; !k.First || k.Auth["type"] != "api" || k.Auth["key"] != "ksk_1" || k.Auth["accountId"] != "Kiro API key" {
 		t.Fatalf("the key: %+v", k)
 	}
 	own := ms["Kiro account"]
 	if !own.Own || own.First || own.Auth["source"] != "kiro" || own.Auth["access"] != "" {
 		t.Fatalf("Kiro's own: %+v", own)
 	}
+	// with the key, the built-in used nothing else: b goes along off
 	b := ms["b@x"]
-	if b.Own || b.First || !b.On || b.Auth["access"] != "b-a" || b.Auth["refresh"] != "b-r" || b.Auth["expires"] != exp.UnixMilli() ||
+	if b.Own || b.First || b.On || b.Auth["access"] != "b-a" || b.Auth["refresh"] != "b-r" || b.Auth["expires"] != exp.UnixMilli() ||
 		b.Auth["method"] != "idc" || b.Auth["loginProvider"] != "Enterprise" || b.Auth["region"] != "eu-west-1" ||
 		b.Auth["profileArn"] != "arn:p" || b.Auth["clientId"] != "cid" || b.Auth["clientSecret"] != "cs" || b.Auth["plan"] != "Pro" {
 		t.Fatalf("b@x: %+v", b.Auth)
@@ -110,9 +114,29 @@ func TestKiroMover(t *testing.T) {
 	if ls2, user, err := movers["kiro"].back(ls, "Kiro account", own.Auth); err != nil || user != "Kiro account" || len(ls2) != n+1 {
 		t.Fatalf("Kiro's own back: %v %q", err, user)
 	}
-	// the key: back onto the provider (give then leaves it)
-	if _, _, err := movers["kiro"].back(ls, "", map[string]any{"type": "api", "key": "ksk_1"}); err != nil || kiroKey() != "ksk_1" {
-		t.Fatalf("the key back: %v %q", err, kiroKey())
+	// the key: back onto the provider once logins.json is let go, saving
+	// the provider syncing the agents, which read the accounts (back runs
+	// holding loginsMu: saving it there hung the move back)
+	catalog.Changed = func() { loginsMu.Lock(); loginsMu.Unlock() }
+	t.Cleanup(func() { catalog.Changed = nil })
+	key := map[string]any{"type": "api", "key": "ksk_1"}
+	done := make(chan error, 1)
+	go func() {
+		loginsMu.Lock()
+		_, _, err := movers["kiro"].back(ls, "", key)
+		loginsMu.Unlock()
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil || kiroKey() != "" {
+			t.Fatalf("the key back: %v, %q on the provider before settling", err, kiroKey())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the key's back hung saving the provider under loginsMu")
+	}
+	if err := movers["kiro"].settle(map[string]map[string]any{"k": key}); err != nil || kiroKey() != "ksk_1" {
+		t.Fatalf("the key settled: %v %q", err, kiroKey())
 	}
 	_ = setKiroKey("")
 	if err := movers["kiro"].give(kept); err != nil || kiroKey() != "ksk_1" {
@@ -165,8 +189,8 @@ func TestWorkBuddyMover(t *testing.T) {
 }
 
 // ZCode's accounts go as the plugin's sign-in keeps them and come back as
-// they were; ZCode's own goes as a copy while it has a key, and stops the
-// move when it has only ZCode's session, which a copy can't follow.
+// they were; ZCode's own goes marked as ZCode's, for the plugin to read
+// ZCode's sign-in anew, its session alone (the Start Plan) too.
 func TestZCodeMover(t *testing.T) {
 	home := signIn(t)
 	t.Setenv("ZCODE_CREDENTIAL_SECRET", "test-secret")
@@ -221,8 +245,12 @@ func TestZCodeMover(t *testing.T) {
 		"oauth:zai:user_info": zcodeEncrypt(t, `{"user_id":"u1","email":"own@example.com"}`),
 		"zcodejwttoken":       zcodeEncrypt(t, zcodeTestJWT(time.Now().Add(time.Hour))),
 	})
-	if _, err := movers["zcode"].out(); err == nil {
-		t.Fatal("ZCode's session alone moved as a copy")
+	if ms := movingOf(t, "zcode"); !ms["own@example.com"].Own || ms["own@example.com"].Auth["expires"] != int64(0) ||
+		!strings.Contains(str(ms["own@example.com"].Auth["refresh"]), `"source":"zcode"`) {
+		t.Fatalf("ZCode's session alone: %+v", ms["own@example.com"])
+	}
+	if update.Newer("0.1.2", movers["zcode"].min) {
+		t.Fatalf("the move installs zcode-auth %q, which doesn't read ZCode's own", movers["zcode"].min)
 	}
 	os.Remove(creds)
 	if ms := movingOf(t, "zcode"); len(ms) != 1 {

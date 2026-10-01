@@ -27,14 +27,14 @@ type pluginSubJSON struct {
 	Models   int             `json:"models"`
 }
 
-// pluginIcon is the vendor's icon: the one the plugin market gives the
-// plugin or its provider, else that of the providers OpenCode names, a
-// plain one for the rest.
-func pluginIcon(spec, id string) string {
-	if ic := plugin.Icon(spec, id); ic != "" {
+// pluginIcon is the vendor's icon: the one the plugin gives its provider,
+// else the one the plugin market gives the plugin or its provider, else
+// that of the providers OpenCode names, a plain one for the rest.
+func pluginIcon(pp plugin.Provider) string {
+	if ic := provider.PluginIcon(pp); ic != "" {
 		return ic
 	}
-	switch id {
+	switch pp.ID {
 	case "github-copilot", "github-copilot-enterprise":
 		return "githubcopilot"
 	case "anthropic":
@@ -55,7 +55,7 @@ func pluginSubs() []pluginSubJSON {
 	out := []pluginSubJSON{}
 	for _, pp := range plugin.Cached() {
 		out = append(out, pluginSubJSON{
-			ID: provider.PluginID(pp.ID), PID: pp.ID, Name: pp.Name, Icon: pluginIcon(pp.Spec, pp.ID), Spec: pp.Spec,
+			ID: provider.PluginID(pp.ID), PID: pp.ID, Name: pp.Name, Icon: pluginIcon(pp), Spec: pp.Spec,
 			Methods: pp.Methods, SignedIn: pp.SignedIn, Models: len(pp.Models),
 		})
 	}
@@ -65,10 +65,13 @@ func pluginSubs() []pluginSubJSON {
 // pluginEntryJSON is a plugin as Settings → Plugins lists it.
 type pluginEntryJSON struct {
 	plugin.Entry
-	Error     string   `json:"error,omitempty"` // why it didn't load
-	Providers []string `json:"providers"`       // the names of those it signs in to
+	Error     string   `json:"error,omitempty"`   // why it didn't load
+	Providers []string `json:"providers"`         // the names of those it signs in to
 	Version   string   `json:"version,omitempty"` // installed
 	Latest    string   `json:"latest,omitempty"`  // on npm, when the market asked
+	// Moved are the built-in subscriptions moved onto it, which go back
+	// to themselves when it is removed or turned off
+	Moved []string `json:"moved"`
 }
 
 type pluginsJSON struct {
@@ -76,10 +79,13 @@ type pluginsJSON struct {
 	Bun     bool              `json:"bun"` // Bun is here; adding the first plugin downloads it otherwise
 	BunVer  string            `json:"bunVersion"`
 	Error   string            `json:"error,omitempty"` // the plugins couldn't be asked
+	// Movable are the built-ins with accounts a plugin could run, which
+	// its card and its row offer to move
+	Movable []provider.MoveCandidate `json:"movable"`
 }
 
 func pluginsState(ctx context.Context) pluginsJSON {
-	s := pluginsJSON{Plugins: []pluginEntryJSON{}, Bun: plugin.HasBun(), BunVer: plugin.BunVersion}
+	s := pluginsJSON{Plugins: []pluginEntryJSON{}, Bun: plugin.HasBun(), BunVer: plugin.BunVersion, Movable: provider.MoveCandidates()}
 	l := plugin.Load()
 	errs := map[string]string{}
 	names := map[string][]string{}
@@ -102,6 +108,10 @@ func pluginsState(ctx context.Context) pluginsJSON {
 		if j.Providers == nil {
 			j.Providers = []string{}
 		}
+		j.Moved = provider.MovedOnto(e.Spec)
+		if j.Moved == nil {
+			j.Moved = []string{}
+		}
 		s.Plugins = append(s.Plugins, j)
 	}
 	return s
@@ -111,7 +121,7 @@ func pluginsState(ctx context.Context) pluginsJSON {
 // says of each, and those added.
 type pluginMarketJSON struct {
 	Listings []pluginListingJSON `json:"listings"`
-	State    pluginsJSON   `json:"state"`
+	State    pluginsJSON         `json:"state"`
 }
 
 type pluginListingJSON struct {
@@ -191,13 +201,13 @@ func pluginRoutes(mux *http.ServeMux, w Windows) {
 		case "add":
 			_, err = plugin.Add(ctx, in.Spec)
 		case "remove":
-			err = plugin.Remove(ctx, in.Spec)
+			err = provider.RemovePlugin(ctx, in.Spec)
 		case "update":
 			err = plugin.Update(ctx)
 		case "upgrade":
 			err = plugin.Upgrade(ctx, plugin.Name(in.Spec))
 		case "off":
-			err = plugin.SetOff(in.Spec, in.Off)
+			err = provider.SetPluginOff(ctx, in.Spec, in.Off)
 		default:
 			http.NotFound(rw, r)
 			return

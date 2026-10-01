@@ -16,11 +16,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/yetone/magpie/internal/provider"
+	"github.com/yetone/magpie/internal/usage"
 )
 
 const (
@@ -162,15 +164,17 @@ func History(day string) (days []HistoryDay, routes []Route, cut bool) {
 		c, ok := history.counts[d.path]
 		if d.day == day || !ok || c.size != d.size {
 			n := 0
-			readDay(d.path, func(line []byte) {
+			readDay(d.path, func(line []byte) bool {
 				n++
 				if d.day != day {
-					return
+					return true
 				}
 				var r Route
 				if json.Unmarshal(line, &r) == nil {
+					r.routedAgain()
 					routes = append(routes, r)
 				}
+				return true
 			})
 			c = counted{d.size, n}
 			history.counts[d.path] = c
@@ -186,8 +190,22 @@ func History(day string) (days []HistoryDay, routes []Route, cut bool) {
 	return days, routes, cut
 }
 
+// routedAgain reads a route kept before Routed was: a try that asked
+// another magpie's routing group was marked swapped for the member it
+// routed to, and is routed (usage.GroupRouted).
+func (r *Route) routedAgain() {
+	for i := range r.Tries {
+		if tr := &r.Tries[i]; tr.Swapped && usage.GroupRouted(tr.Model, tr.Served) {
+			tr.Swapped, tr.Routed = false, true
+		}
+	}
+	if n := len(r.Tries); n > 0 && r.Swapped && r.Tries[n-1].Routed && r.Served == r.Tries[n-1].Served {
+		r.Swapped, r.Routed = false, true
+	}
+}
+
 // readDay calls f with each line of a day's file.
-func readDay(path string, f func([]byte)) {
+func readDay(path string, f func([]byte) bool) {
 	file, err := os.Open(path)
 	if err != nil {
 		return
@@ -206,35 +224,35 @@ func readDay(path string, f func([]byte)) {
 	sc.Buffer(make([]byte, 64<<10), 16<<20)
 	for sc.Scan() {
 		if line := bytes.TrimSpace(sc.Bytes()); len(line) > 0 {
-			f(line)
+			if !f(line) {
+				return
+			}
 		}
 	}
 }
 
-// HistoryRoute finds a request even when it is outside History's last 2000
-// rows. Only the requested route is decoded in full; old days may be gzipped.
-func HistoryRoute(id int64) (Route, bool) {
-	history.mu.Lock()
-	defer history.mu.Unlock()
-	files := historyFiles(HistoryDir())
-	for i := len(files) - 1; i >= 0; i-- {
-		var found Route
-		readDay(files[i].path, func(line []byte) {
-			if found.ID != 0 {
-				return
-			}
-			var key struct {
-				ID int64 `json:"id"`
-			}
-			if json.Unmarshal(line, &key) == nil && key.ID == id {
-				var r Route
-				if json.Unmarshal(line, &r) == nil {
-					found = r
+// HistoryRoute searches the request's day and its neighbours (the browser and
+// gateway may use different time zones), without holding up history writes.
+func HistoryRoute(id int64, day time.Time) (Route, bool) {
+	needle := []byte(`"id":` + strconv.FormatInt(id, 10) + `,`)
+	for _, offset := range []int{0, -1, 1} {
+		name := filepath.Join(HistoryDir(), day.AddDate(0, 0, offset).Format(dayForm)+".jsonl")
+		for _, path := range []string{name, name + ".gz"} {
+			var found Route
+			readDay(path, func(line []byte) bool {
+				if !bytes.Contains(line, needle) {
+					return true
 				}
+				if json.Unmarshal(line, &found) != nil || found.ID != id {
+					found = Route{}
+					return true
+				}
+				found.routedAgain()
+				return false
+			})
+			if found.ID != 0 {
+				return found, true
 			}
-		})
-		if found.ID != 0 {
-			return found, true
 		}
 	}
 	return Route{}, false

@@ -21,6 +21,7 @@ func codexHome(t *testing.T, auth, config string) (home string, read func() stri
 	t.Setenv("OPENCODE_CONFIG_DIR", "")
 	t.Setenv("OPENCHAMBER_DATA_DIR", "")
 	t.Setenv("MIMOCODE_HOME", "")
+	t.Setenv("MINIMAX_DATA_DIR", "")
 	// Windows' own folders too: Claude Desktop's are in LOCALAPPDATA
 	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
 	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))

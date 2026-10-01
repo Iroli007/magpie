@@ -96,6 +96,7 @@ func TestFindCodexDaemon(t *testing.T) {
 func fakeDaemon(t *testing.T) *int {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	pid := new(int)
 	old, oldHome := listProcesses, processCodexHome
 	t.Cleanup(func() {

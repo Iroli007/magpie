@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -129,7 +130,7 @@ func TestStepFunSession(t *testing.T) {
 	if err := SaveStepFunSession(ctx, "ai", acc, ref, "web-1"); err != nil {
 		t.Fatal(err)
 	}
-	if fi, err := os.Stat(stepfunPath()); err != nil || fi.Mode().Perm() != 0o600 {
+	if fi, err := os.Stat(stepfunPath()); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("session file: %v %v", fi, err)
 	}
 	p := Provider{ID: "stepfun", Name: "StepFun", Icon: "stepfun-color", Chat: "https://api.stepfun.ai/step_plan/v1"}

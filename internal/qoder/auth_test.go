@@ -14,7 +14,7 @@ import (
 // TestAuthorizationURL checks the device-flow page carries PKCE S256 and the
 // client id, and returns the verifier+nonce the later poll needs.
 func TestAuthorizationURL(t *testing.T) {
-	f := NewDeviceFlow(nil)
+	f := NewDeviceFlow(nil, nil)
 	authURL, verifier, nonce, err := f.Authorization()
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestAuthorizationURL(t *testing.T) {
 }
 
 // TestDeviceFlowAndRefresh runs the real poll -> jobToken -> refresh rounds
-// against a stub of the OpenAPI host (repointed through openAPIHost), checking
+// against a stub of the OpenAPI host (repointed through Global.OpenAPI), checking
 // each round trips the right fields and headers.
 func TestDeviceFlowAndRefresh(t *testing.T) {
 	var pollHits int
@@ -78,16 +78,16 @@ func TestDeviceFlowAndRefresh(t *testing.T) {
 	defer srv.Close()
 
 	// Repoint the package host at the stub so the real round-trip functions run
-	// against it (they build their URLs from openAPIHost + the path constants).
-	host := openAPIHost
-	openAPIHost = srv.URL
-	defer func() { openAPIHost = host }()
+	// against it (they build their URLs from Global.OpenAPI + the path constants).
+	host := Global.OpenAPI
+	Global.OpenAPI = srv.URL
+	defer func() { Global.OpenAPI = host }()
 	client := srv.Client()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	f := NewDeviceFlow(client)
+	f := NewDeviceFlow(client, nil)
 	dt, err := f.PollDeviceToken(ctx, "nonce", "verifier", time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestDeviceFlowAndRefresh(t *testing.T) {
 	if jt.Token != "jt-xyz" || jt.Expiry() != time.Hour {
 		t.Fatalf("jobToken: %+v", jt)
 	}
-	updated, err := RefreshJobToken(ctx, client, "jrt")
+	updated, err := RefreshJobToken(ctx, client, nil, "jrt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,18 +126,18 @@ func TestFetchUserInfo(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"u1","name":"Ethan Xu","email":"e@x.com","source":"sso.google"}`))
 	}))
 	defer srv.Close()
-	host := openAPIHost
-	openAPIHost = srv.URL
-	defer func() { openAPIHost = host }()
+	host := Global.OpenAPI
+	Global.OpenAPI = srv.URL
+	defer func() { Global.OpenAPI = host }()
 
-	ui, err := FetchUserInfo(context.Background(), srv.Client(), "dt-abc")
+	ui, err := FetchUserInfo(context.Background(), srv.Client(), nil, "dt-abc")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ui.Email != "e@x.com" || ui.Name != "Ethan Xu" || ui.ID != "u1" {
 		t.Fatalf("userinfo: %+v", ui)
 	}
-	if _, err := FetchUserInfo(context.Background(), srv.Client(), ""); err == nil {
+	if _, err := FetchUserInfo(context.Background(), srv.Client(), nil, ""); err == nil {
 		t.Fatal("empty device token should error")
 	}
 }
@@ -149,7 +149,7 @@ func TestParseModels(t *testing.T) {
 		{"key":"qfmodel","display_name":"Qwen3.8-Flash","enable":true,"is_vl":true,"max_input_tokens":200000},
 		{"key":"auto","enable":true},
 		{"key":"off-model","enable":false}]}`)
-	ms, err := ParseModels(body)
+	ms, err := ParseModels(body, ProviderKey)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@ import (
 // through magpie then is the account Claude Code uses, not one kept beside a
 // stale one, and it shows up as a provider (#31).
 func TestClaudeSignInOverStaleCredentials(t *testing.T) {
+	shellFakes(t)
 	home := claudeHome(t)
 	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

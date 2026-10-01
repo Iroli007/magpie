@@ -3,6 +3,7 @@ package provider
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -31,7 +32,7 @@ func TestPrivateWritesKeepSymlink(t *testing.T) {
 		if string(b) != `{"a":1}` {
 			t.Errorf("%s: target %q", name, b)
 		}
-		if st, _ := os.Stat(target); st.Mode().Perm() != 0o600 {
+		if st, _ := os.Stat(target); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 			t.Errorf("%s: mode %v", name, st.Mode().Perm())
 		}
 	}

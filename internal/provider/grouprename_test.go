@@ -10,6 +10,7 @@ import (
 // name it by the new one.
 func TestRenameGroup(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, id := range []string{"a", "b"} {
 		if err := Save(Provider{ID: id, Name: id, Key: "k", Chat: "http://127.0.0.1:1/v1", Models: []string{"gpt-6-astra", "x"}}); err != nil {

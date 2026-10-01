@@ -43,8 +43,8 @@ func SetLoginOn(agent, user string, on bool) error {
 		return setWorkBuddyLoginOn(wbSiteOf(agent), user, on)
 	case CommandCodePlanID:
 		return setCommandCodeLoginOn(user, on)
-	case "qoder":
-		return setSideLoginOn("qoder", user, on, qoderLogins())
+	case "qoder", QoderCNID:
+		return setSideLoginOn(agent, user, on, qoderLoginsOf(agent))
 	case "zed":
 		return setZedLoginOn(user, on)
 	case "factory":
@@ -143,8 +143,8 @@ func (p Provider) AlsoOn() []Provider {
 	if p.Account != nil && p.Account.Agent == CommandCodePlanID {
 		return commandCodeAlsoOn()
 	}
-	if p.Account != nil && p.Account.Agent == "qoder" {
-		return qoderAlsoOn()
+	if p.Account != nil && (p.Account.Agent == "qoder" || p.Account.Agent == QoderCNID) {
+		return qoderAlsoOn(p.Account.Agent)
 	}
 	if p.Account != nil && p.Account.Agent == "zed" {
 		return zedAlsoOn()

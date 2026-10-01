@@ -81,11 +81,40 @@ func TestHistoryRouteOutsideDayLimit(t *testing.T) {
 			t.Fatalf("history: %d, cut %v", len(rows), cut)
 		}
 		id := at.UnixMilli() + 1
-		if r, ok := HistoryRoute(id); !ok || r.ID != id || r.Model != "model" {
+		if r, ok := HistoryRoute(id, at); !ok || r.ID != id || r.Model != "model" {
 			t.Fatalf("route: %+v, found %v", r, ok)
 		}
 	}
-	if _, ok := HistoryRoute(42); ok {
+	if _, ok := HistoryRoute(42, now); ok {
 		t.Fatal("found missing route")
+	}
+}
+
+func TestHistoryRouteDayAndNoLock(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	os.MkdirAll(HistoryDir(), 0o700)
+	path := filepath.Join(HistoryDir(), day.AddDate(0, 0, -1).Format(dayForm)+".jsonl")
+	os.WriteFile(path, []byte(`{"id":1234,"model":"wrong"}`+"\n"+`{"id":123,"model":"wanted"}`+"\n"), 0o600)
+	gzipFile(path)
+	// A lookup must finish even while a history writer holds its mutex.
+	history.mu.Lock()
+	done := make(chan Route, 1)
+	go func() { r, _ := HistoryRoute(123, day); done <- r }()
+	select {
+	case r := <-done:
+		history.mu.Unlock()
+		if r.ID != 123 || r.Model != "wanted" {
+			t.Fatalf("%+v", r)
+		}
+	case <-time.After(time.Second):
+		history.mu.Unlock()
+		t.Fatal("lookup waited for history mutex")
+	}
+	if _, ok := HistoryRoute(123, day.AddDate(0, 0, -2)); !ok {
+		t.Fatal("next day was not checked")
+	}
+	if _, ok := HistoryRoute(123, day.AddDate(0, 0, 2)); ok {
+		t.Fatal("searched outside the three-day window")
 	}
 }

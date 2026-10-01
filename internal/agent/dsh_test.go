@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/provider"
 )
@@ -116,12 +118,12 @@ func TestDshProfiles(t *testing.T) {
 	}
 	for _, p := range []string{web, desktop} {
 		s := read(p)
-		for _, want := range []string{"# Your patch layer", "- id: llm-deepseek # magpie", "apiKeyEnv: " + dshKeyRef, `baseURL: "http://`, "- id: agent-default-model # magpie", "provider: deepseek-official", `model: "deepseek/pro"`} {
+		for _, want := range []string{"# Your patch layer", "- id: llm-pi-ai # magpie", "    providers:\n      magpie:\n", "apiKeyEnv: " + dshKeyRef, "baseURL: http://", "- id: agent-default-model # magpie", "provider: magpie", `model: "deepseek/pro"`} {
 			if !strings.Contains(s, want) {
 				t.Fatalf("missing %q in %s:\n%s", want, p, s)
 			}
 		}
-		if strings.Contains(s, "[]") || strings.Contains(s, "apiKey:") || strings.Contains(s, "agent-loop") {
+		if strings.Contains(s, "[]") || strings.Contains(s, "apiKey:") || strings.Contains(s, "agent-loop") || strings.Contains(s, "llm-deepseek") {
 			t.Fatalf("%s:\n%s", p, s)
 		}
 	}
@@ -141,7 +143,7 @@ func TestDshProfiles(t *testing.T) {
 	if err := f.Set("deepseek-v4-pro"); err != nil {
 		t.Fatal(err)
 	}
-	if s := read(web); strings.Contains(s, "llm-deepseek") || !strings.Contains(s, `model: "deepseek-v4-pro"`) || f.Get() != "deepseek-v4-pro" {
+	if s := read(web); strings.Contains(s, "llm-pi-ai") || !strings.Contains(s, "provider: deepseek-official") || !strings.Contains(s, `model: "deepseek-v4-pro"`) || f.Get() != "deepseek-v4-pro" {
 		t.Fatalf("own model: %q\n%s", f.Get(), s)
 	}
 	if strings.Contains(read(filepath.Join(dir, ".env")), dshKeyRef) {
@@ -185,14 +187,16 @@ func TestDshModelLimits(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	s := strings.Join(dshProviderLines(true, ""), "\n")
-	want := `      - id: "v/see"
-        name: "see · V"
-        contextWindow: 400000
-        maxTokens: 128000
-        inputModalities: [text, image]
-      - id: "v/plain"
-        name: "plain · V"`
+	b, _ := yaml.Marshal(dshRouteConfig())
+	s := string(b)
+	want := `    - id: v/see
+      name: see · V
+      contextWindow: 400000
+      maxTokens: 128000
+      input: [text, image]
+    - id: v/plain
+      name: plain · V
+      input: [text]`
 	if !strings.Contains(s, want) || strings.Count(s, "contextWindow") != 1 {
 		t.Fatalf("models:\n%s", s)
 	}
@@ -236,22 +240,18 @@ func TestDshProfileMadeLater(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(desktop)
-	for _, want := range []string{"- id: llm-deepseek # magpie", "apiKeyEnv: " + dshKeyRef, "- id: agent-default-model # magpie", `model: "deepseek/pro"`} {
+	for _, want := range []string{"- id: llm-pi-ai # magpie", "apiKeyEnv: " + dshKeyRef, "- id: agent-default-model # magpie", `model: "deepseek/pro"`} {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("missing %q in the desktop profile:\n%s", want, b)
 		}
 	}
-	if b, _ := os.ReadFile(mine); string(b) != own {
+	// dsh's own DeepSeek row, pointed elsewhere by the user, is no longer
+	// magpie's to take: the profile gets magpie's route beside it
+	b, _ = os.ReadFile(mine)
+	if !strings.HasPrefix(string(b), own) || !strings.Contains(string(b), "- id: llm-pi-ai # magpie") {
 		t.Fatalf("the user's own entry was changed:\n%s", b)
 	}
-	// the user's own profile is still reported, until the model is set again
-	if d := a.Check(); !strings.Contains(d, "mine profile") {
-		t.Fatalf("got %q", d)
-	}
-	if err := a.Field("model").Set("magpie/deepseek/pro"); err != nil {
-		t.Fatal(err)
-	}
 	if d := a.Check(); d != "" {
-		t.Fatalf("after setting it again: %s", d)
+		t.Fatalf("after the sync: %s", d)
 	}
 }

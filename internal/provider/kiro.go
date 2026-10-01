@@ -33,6 +33,7 @@ import (
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/proc"
+	"github.com/yetone/magpie/internal/steady"
 )
 
 // KiroExecutable finds kiro-cli, which refreshes its own sign-in; a var so
@@ -464,7 +465,7 @@ func writeFileAtomic(path string, b []byte) error {
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return steady.Rename(tmp, path)
 }
 
 // kiroPost posts to a sign-in endpoint.

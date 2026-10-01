@@ -23,6 +23,9 @@ func TestBuiltinMarket(t *testing.T) {
 		if x.Summary["en"] == "" || x.Summary["zh"] == "" {
 			t.Errorf("%s: summary needs en and zh", x.Package)
 		}
+		if !x.Community {
+			t.Errorf("%s: only magpie's community's plugins are listed", x.Package)
+		}
 		if len(x.Providers) == 0 || x.Icon == "" {
 			t.Errorf("%s: needs providers and an icon", x.Package)
 		}
@@ -43,7 +46,7 @@ func TestMarketSources(t *testing.T) {
 			http.Error(w, "down", 500)
 			return
 		}
-		w.Write([]byte(`{"version":1,"plugins":[{"package":"opencode-x-auth","name":"X"},{"package":"not a name"}]}`))
+		w.Write([]byte(`{"version":1,"plugins":[{"package":"opencode-x-auth","name":"X","community":true},{"package":"not a name","community":true},{"package":"opencode-other-auth","name":"Other"}]}`))
 	}))
 	defer srv.Close()
 	t.Setenv("MAGPIE_PLUGIN_MARKET", srv.URL)
@@ -82,6 +85,9 @@ func TestMarketIcon(t *testing.T) {
 	marketMu.Unlock()
 	for _, c := range []struct{ spec, id, want string }{
 		{"@cognitionai/opencode-devin@0.3.1", "devin", "devin"},
+		{"opencode-gemini-auth@2.0.1", "google", "gemini-color"},
+		{"opencode-copilot-auth", "github-copilot", "githubcopilot"},
+		{"some-unlisted-plugin", "anthropic", "claude-color"},
 		{"opencode-antigravity-auth", "google", "antigravity-color"},
 		{"/Users/me/plugins/packages/zed", "zed", "zed"},
 		{"some-unlisted-plugin", "commandcode-plan", "commandcode"},

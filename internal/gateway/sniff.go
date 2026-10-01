@@ -20,6 +20,9 @@ type usageSniffer struct {
 	u     Usage
 	// served: the model the reply says answered it, the last it named
 	served string
+	// ended: the stream's last event went by (message_stop, [DONE],
+	// response.completed …) or an error that ends it
+	ended bool
 }
 
 func newSniffer(proto provider.Protocol, contentType string) *usageSniffer {
@@ -55,6 +58,9 @@ func (s *usageSniffer) line(line []byte) {
 		s.flushEvent()
 		return
 	}
+	if rest, ok := bytes.CutPrefix(line, []byte("event:")); ok && lastEvent(string(bytes.TrimSpace(rest))) {
+		s.ended = true // the name says so even when the data is too big to read
+	}
 	if rest, ok := bytes.CutPrefix(line, []byte("data:")); ok {
 		rest = bytes.TrimPrefix(rest, []byte{' '})
 		if len(s.data)+len(rest)+1 > 1<<20 {
@@ -81,6 +87,22 @@ func (s *usageSniffer) flushEvent() {
 }
 
 func (s *usageSniffer) parse(b []byte) {
+	if s.sse && string(b) == "[DONE]" {
+		s.ended = true
+		return
+	}
+	var t struct {
+		Type  string `json:"type"`
+		Error any    `json:"error"`
+	}
+	if s.sse && json.Unmarshal(b, &t) == nil {
+		switch {
+		case lastEvent(t.Type):
+			s.ended = true
+		case t.Type == "":
+			s.ended = s.ended || t.Error != nil // a Chat stream's error
+		}
+	}
 	switch s.proto {
 	case provider.Chat:
 		var v struct {
@@ -140,9 +162,23 @@ func (s *usageSniffer) saw(model string) {
 	}
 }
 
-// usage is what the reply reported, the model it named in Served; call it
-// once the body has ended.
-func (s *usageSniffer) usage() Usage {
+// lastEvent reports whether an event of this type ends a stream.
+func lastEvent(t string) bool {
+	switch t {
+	case "message_stop", "error", "response.completed", "response.incomplete", "response.failed":
+		return true
+	}
+	return false
+}
+
+// whole reports whether the stream got to its last event; call it once
+// the body has ended.
+func (s *usageSniffer) whole() bool {
+	s.drain()
+	return s.ended
+}
+
+func (s *usageSniffer) drain() {
 	if s.sse {
 		if len(s.buf) > 0 {
 			s.line(bytes.TrimSuffix(s.buf, []byte{'\r'}))
@@ -150,6 +186,12 @@ func (s *usageSniffer) usage() Usage {
 		}
 		s.flushEvent()
 	}
+}
+
+// usage is what the reply reported, the model it named in Served; call it
+// once the body has ended.
+func (s *usageSniffer) usage() Usage {
+	s.drain()
 	if !s.sse && !s.over && len(s.buf) > 0 {
 		s.parse(bytes.TrimSpace(s.buf))
 		s.buf = nil

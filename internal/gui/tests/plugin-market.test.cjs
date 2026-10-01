@@ -95,10 +95,10 @@ function server(lang, asked) {
 }
 
 const L = {
-  en: { tab: "Plugins", ours: "magpie community", theirs: "From OpenCode's community", install: "Install", soon: "Coming soon", signIn: "Sign in", onNpm: "On npm",
+  en: { tab: "Plugins", ours: "magpie community", install: "Install", soon: "Coming soon", signIn: "Sign in", onNpm: "On npm",
     installed: "Installed", failed: /Didn't load: Cannot find module/, update: "Update", remove: "Remove", more: "More subscriptions", moreTile: "More in Plugins",
     lookFor: "look for a plugin", week: "48k/week", readme: "Install", signing: "GitHub Copilot" },
-  zh: { tab: "插件", ours: "magpie 社区", theirs: "来自 OpenCode 社区", install: "安装", soon: "即将上线", signIn: "登录", onNpm: "npm 上的插件",
+  zh: { tab: "插件", ours: "magpie 社区", install: "安装", soon: "即将上线", signIn: "登录", onNpm: "npm 上的插件",
     installed: "已安装", failed: /没有加载成功：Cannot find module/, update: "更新", remove: "移除", more: "更多订阅", moreTile: "插件中还有更多",
     lookFor: "找找插件", week: "48k/周", readme: "Install", signing: "GitHub Copilot" },
 };
@@ -135,17 +135,18 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         assert.equal(await page.locator('#nav button[data-view="plugins"]').getAttribute("class"), "on");
         assert.match(page.url(), /view=plugins/);
 
-        // Discover: two sections, sorted by downloads in the second
+        // Discover: magpie's community's plugins alone, others' only found by a search
         await view.locator(".pm-sechead h3", { hasText: w.ours }).waitFor();
-        await view.locator(".pm-sechead h3", { hasText: w.theirs }).waitFor();
-        const theirs = view.locator(".pm-sec").nth(1).locator(".pm-card .pm-name b");
-        assert.deepEqual(await theirs.allInnerTexts(), ["GitHub Copilot", "Gemini"]);
-        const copilot = view.locator('.pm-card[data-pkg="opencode-copilot-auth"]');
-        await copilot.locator(".pm-dl", { hasText: w.week }).waitFor();
-        assert.equal((await copilot.locator(".pm-by").innerText()).trim(), "thdxr");
+        assert.equal(await view.locator(".pm-sec").count(), 1);
+        assert.equal(await view.locator('.pm-card[data-pkg="opencode-copilot-auth"]').count(), 0);
+        assert.doesNotMatch(await view.innerText(), /OpenCode 社区|OpenCode's community/);
         assert.equal(await view.locator('.pm-card[data-pkg="@magpie-community/opencode-qoder-auth"] .pm-act').innerText(), w.soon);
         assert.ok(await view.locator('.pm-card[data-pkg="@magpie-community/opencode-qoder-auth"] .pm-act').isDisabled());
         await shot(view, `plugins-discover-${engine}-${lang}`);
+        await view.locator(".pm-find input").fill("copilot");
+        const copilot = view.locator('.pm-card[data-pkg="opencode-copilot-auth"]');
+        await copilot.locator(".pm-dl", { hasText: w.week }).waitFor();
+        assert.equal((await copilot.locator(".pm-by").innerText()).trim(), "thdxr");
 
         // a card's page: facts, links opened outside, the README without pictures
         await copilot.locator(".pm-sum").click();

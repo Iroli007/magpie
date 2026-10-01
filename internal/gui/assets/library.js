@@ -498,12 +498,85 @@
     else page.querySelector(":scope > .lib-head")?.after(card);
   }
 
+  // Until the library comes, the page is drawn as it will be: the real tabs
+  // (one can be picked already) and, for the tab open, its rows in outline,
+  // so nothing moves when they're filled in. The outline shows only if the
+  // wait is long enough to see it.
   function renderLoading() {
     page.replaceChildren();
     shown = "";
-    const l = el("div", "list lib-skel");
-    for (let i = 0; i < 4; i++) l.append(el("div", "row skeleton"));
-    page.append(l);
+    page.append(libHead(null), skeleton(tab));
+  }
+
+  function skeleton(which) {
+    const box = el("div", "lib-body lib-skel");
+    box.setAttribute("aria-busy", "true");
+    const bar = (w, h, cls = "") => {
+      const b = el("span", "skeleton " + cls);
+      b.style.cssText = `width:${w};height:${h}px`;
+      return b;
+    };
+    // name and path lengths vary, as they will
+    const widths = [[34, 46], [22, 40], [30, 52], [26, 38], [38, 44], [20, 36], [28, 48]];
+    const rows = (n, sw) => {
+      const list = el("div", "list lib-list");
+      for (let i = 0; i < n; i++) {
+        const [a, b] = widths[i % widths.length];
+        const row = el("div", "row lib-row");
+        const who = el("div", "who");
+        who.append(bar(a + "%", 10), bar(b + "%", 8));
+        row.append(bar("26px", 26, "lib-sk-icon"), who, el("span", "grow"));
+        if (sw) row.append(bar("34px", 20, "lib-sk-switch"));
+        list.append(row);
+      }
+      return list;
+    };
+    const head = (w) => {
+      const rh = el("div", "row-head");
+      rh.append(bar(w, 8));
+      return rh;
+    };
+    const intro = el("div", "lib-intro lib-sk-intro");
+    intro.append(bar("min(520px, 80%)", 9));
+    box.append(intro);
+    if (which === "instructions") {
+      const card = el("div", "list lib-list");
+      const ch = el("div", "row lib-row");
+      ch.append(bar("26px", 26, "lib-sk-icon"), bar("150px", 11));
+      card.append(ch, rows(1, false).firstChild);
+      box.append(card, head("60px"), rows(6, true));
+    } else if (which === "rtk") {
+      box.append(rows(1, false), head("60px"), rows(5, true));
+    } else {
+      box.append(rows(5, true));
+    }
+    return box;
+  }
+
+  // the tabs and the Library folder; without the library yet (lib is null
+  // while it loads) the tabs have no counts and the folder waits
+  function libHead(counts) {
+    const head = el("div", "lib-head");
+    const n = (k) => (counts?.[k] ? " · " + counts[k] : "");
+    const tabs = segs([
+      ["instructions", t("Instructions")],
+      ["mcp", t("MCP servers") + n("mcp")],
+      ["skills", t("Skills") + n("skills")],
+      ["rtk", "RTK"],
+    ], tab, (id) => {
+      tab = id;
+      try { localStorage.setItem("magpie.libTab", id); } catch {}
+      if (!lib) return page.querySelector(":scope > .lib-skel")?.replaceWith(skeleton(id));
+      render(); syncLists();
+    });
+    tabs.classList.add("lib-tabs");
+    head.append(tabs, el("span", "grow"));
+    const more = button("", "lib-more", () => lib && reveal(lib.dir));
+    more.append(glyph(GLYPH.folder, "lib-mini"), el("span", "", t("Library folder")));
+    if (lib) more.title = tilde(lib.dir);
+    else more.disabled = true;
+    head.append(more);
+    return head;
   }
 
   // ---------- the page ----------
@@ -515,24 +588,7 @@
     const caret = focus ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     page.replaceChildren();
     fits = [];
-    const head = el("div", "lib-head");
-    const counts = {
-      instructions: lib.instructions.agents.filter((a) => a.on).length,
-      mcp: lib.servers.length,
-      skills: lib.skills.length,
-    };
-    const tabs = segs([
-      ["instructions", t("Instructions")],
-      ["mcp", t("MCP servers") + (counts.mcp ? " · " + counts.mcp : "")],
-      ["skills", t("Skills") + (counts.skills ? " · " + counts.skills : "")],
-      ["rtk", "RTK"],
-    ], tab, (id) => { tab = id; try { localStorage.setItem("magpie.libTab", id); } catch {} render(); syncLists(); });
-    tabs.classList.add("lib-tabs");
-    head.append(tabs, el("span", "grow"));
-    const more = button("", "lib-more", () => reveal(lib.dir));
-    more.append(glyph(GLYPH.folder, "lib-mini"), el("span", "", t("Library folder")));
-    more.title = tilde(lib.dir);
-    head.append(more);
+    const head = libHead({ mcp: lib.servers.length, skills: lib.skills.length });
     page.append(head);
     head.classList.toggle("stuck", top > 0);
     if (!lib.agents.length) {

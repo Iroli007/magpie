@@ -14,6 +14,7 @@ func TestSavedButSignedOut(t *testing.T) {
 	isolate(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	if err := writeLogins([]savedLogin{
@@ -65,6 +66,7 @@ func TestSavedButSignedOutClaudeSaysWhy(t *testing.T) {
 	if w := why(); !strings.Contains(w, "nothing at "+filepath.Join(home, ".claude", ".credentials.json")) {
 		t.Fatalf("no credentials: %q", w)
 	}
+	shellFakes(t)
 	claudeSignIn(t, home, time.Now().Add(time.Hour))
 	exe := filepath.Join(home, "claude")
 	os.WriteFile(exe, []byte("#!/bin/sh\necho '{\"loggedIn\": false}'\n"), 0o755)
@@ -116,6 +118,7 @@ func TestSavedButSignedOutCanBeRemoved(t *testing.T) {
 // under its account: another item for the same service (one an earlier
 // sign-in left) that comes first by service alone isn't taken for it.
 func TestClaudeKeychainReadsItsAccount(t *testing.T) {
+	shellFakes(t)
 	home := claudeHome(t)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	t.Setenv("USER", "tester")

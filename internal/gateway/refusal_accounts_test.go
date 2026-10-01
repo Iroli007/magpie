@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/provider"
+	"github.com/yetone/magpie/internal/usage"
 )
 
 // OpenAI's safety filter refusing a Codex turn, as the ChatGPT backend said
@@ -205,6 +206,10 @@ func TestClaudeRefusalMovesToNextKey(t *testing.T) {
 	r := lastRoute(s)
 	if len(r.Tries) != 2 || r.Tries[0].Fail != failRefused || r.Tries[0].Rest != nil || r.Tries[1].Status != 200 {
 		t.Fatalf("tries: %+v", r.Tries)
+	}
+	recs := usage.Load(time.Time{})
+	if len(recs) != 2 || recs[0].ProviderKeyID != provider.KeyID("k1") || recs[1].ProviderKeyID != provider.KeyID("k2") {
+		t.Fatalf("refusal and answer must keep their own keys: %+v", recs)
 	}
 }
 

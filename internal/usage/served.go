@@ -3,6 +3,8 @@ package usage
 import (
 	"regexp"
 	"strings"
+
+	"github.com/yetone/magpie/internal/provider"
 )
 
 // Which model answered: a vendor may serve a request with another model
@@ -37,8 +39,19 @@ func bareModel(m string) string {
 
 // Swapped reports whether served is another model than sent: not the same
 // name, however dated, pinned or prefixed. A vendor's "auto" (Copilot's,
-// Cursor's) asked it to pick, so whichever answers wasn't swapped in.
+// Cursor's) asked it to pick, so whichever answers wasn't swapped in, nor
+// is the member another magpie's routing group sent it to (GroupRouted).
 func Swapped(sent, served string) bool {
 	a, b := bareModel(sent), bareModel(served)
-	return a != "" && b != "" && a != b && a != "auto"
+	return a != "" && b != "" && a != b && a != "auto" && !GroupRouted(sent, served)
+}
+
+// GroupRouted reports whether sent is a routing group of another magpie
+// (a remote magpie's "group/<id>", the one name only a magpie answers
+// to) and served the model its reply named: the member the group routed
+// the request to, which is the group doing its job, not the vendor
+// serving another model than asked (莫 on Discord: group/auto-… answered
+// by deepseek/deepseek-v4.1-flash, marked a swap).
+func GroupRouted(sent, served string) bool {
+	return strings.TrimSpace(served) != "" && strings.HasPrefix(strings.TrimSpace(sent), provider.GroupPrefix)
 }

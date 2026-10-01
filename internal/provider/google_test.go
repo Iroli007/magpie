@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,7 @@ type fakeGoogle struct {
 	onboard   string // onboardUser's reply
 	quota     string // retrieveUserQuota's reply
 	flags     string // listExperiments' reply
+	models    string // fetchAvailableModels' reply
 	exps      []map[string]any
 	heads     map[string]http.Header
 }
@@ -61,6 +63,8 @@ func (f *fakeGoogle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, f.onboard)
 	case strings.HasSuffix(r.URL.Path, ":retrieveUserQuota") && f.quota != "":
 		io.WriteString(w, f.quota)
+	case strings.HasSuffix(r.URL.Path, ":fetchAvailableModels") && f.models != "":
+		io.WriteString(w, f.models)
 	case strings.HasSuffix(r.URL.Path, ":listExperiments") && f.flags != "":
 		f.exps = append(f.exps, body)
 		io.WriteString(w, f.flags)
@@ -75,6 +79,7 @@ func googleSandbox(t *testing.T, f *fakeGoogle) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows's home
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	srv := httptest.NewServer(f)
@@ -382,5 +387,56 @@ func TestAntigravityProjectAndEnvelope(t *testing.T) {
 	json.Unmarshal(b2, &env2)
 	if env2["request"].(map[string]any)["sessionId"] != r["sessionId"] {
 		t.Error("session changed between turns")
+	}
+}
+
+// An Antigravity account's windows are one a model, each naming its family
+// (01huadalang on Discord: several accounts, every level of every model,
+// read as bloat), so the GUI can show one figure a family; the windows
+// themselves, and the model each counts for routing, stay as they were.
+func TestAntigravityQuotaFamilies(t *testing.T) {
+	f := &fakeGoogle{
+		load:    `{"allowedTiers":[{"id":"free-tier","name":"Antigravity","isDefault":true}]}`,
+		onboard: `{"done":true,"response":{"cloudaicompanionProject":"ag-proj"}}`,
+		models: `{"models":{
+			"gemini-3.1-pro-high":{"displayName":"Gemini 3.1 Pro (High)","quotaInfo":{"remainingFraction":0.4,"resetTime":"2099-01-01T00:00:00Z"}},
+			"gemini-3.1-pro-low":{"displayName":"Gemini 3.1 Pro (Low)","quotaInfo":{"remainingFraction":1}},
+			"gemini-3.7-flash-medium":{"displayName":"Gemini 3.7 Flash (Medium)","quotaInfo":{}},
+			"claude-opus-4-6-thinking":{"displayName":"Claude Opus 4.6 (Thinking)","quotaInfo":{"remainingFraction":0.75}},
+			"claude-sonnet-4-6":{"quotaInfo":{"remainingFraction":0.9}},
+			"gpt-oss-120b-medium":{"displayName":"GPT-OSS 120B (Medium)","quotaInfo":{"remainingFraction":1}},
+			"tab_flash_lite_preview":{"quotaInfo":{"remainingFraction":1}}}}`,
+	}
+	googleSandbox(t, f)
+	auth := googleAuth{AccessToken: "tok", RefreshToken: "rt-ag", Expiry: time.Now().Add(time.Hour).UnixMilli()}
+	if err := addGoogleLogin("antigravity", "ag@example.com", "", auth); err != nil {
+		t.Fatal(err)
+	}
+	q := googleLogins("antigravity")[0].acct.quota(context.Background(), "")
+	var got []string
+	for _, w := range q.Windows {
+		got = append(got, fmt.Sprintf("%s|%s|%s|%.0f", w.Model, w.Name, w.Family, w.Used))
+	}
+	want := []string{
+		"claude-opus-4-6-thinking|Claude Opus 4.6 (Thinking)|Claude|25",
+		"claude-sonnet-4-6|claude-sonnet-4-6|Claude|10",
+		"gemini-3.1-pro-high|Gemini 3.1 Pro (High)|Gemini|60",
+		"gemini-3.1-pro-low|Gemini 3.1 Pro (Low)|Gemini|0",
+		"gemini-3.7-flash-medium|Gemini 3.7 Flash (Medium)|Gemini|100",
+		"gpt-oss-120b-medium|GPT-OSS 120B (Medium)|GPT-OSS|0",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("windows\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	b, _ := json.Marshal(q.Windows[0])
+	if !strings.Contains(string(b), `"family":"Claude"`) {
+		t.Errorf("json %s", b)
+	}
+	// a family Antigravity may add later goes by its name's first word
+	for _, m := range []catalog.Model{{ID: "gemini-3-flash"}, {ID: "claude-x", Name: "Other"}, {ID: "kimi-k2", Name: "Kimi K2"}, {ID: "glm-5"}} {
+		fam := antigravityVendor(m)
+		if want := map[string]string{"gemini-3-flash": "Gemini", "claude-x": "Claude", "kimi-k2": "Kimi", "glm-5": "glm"}[m.ID]; fam != want {
+			t.Errorf("family of %s = %q, want %q", m.ID, fam, want)
+		}
 	}
 }

@@ -42,6 +42,11 @@ func startZedSignIn(s *signInFlow) error {
 			http.NotFound(w, r)
 			return
 		}
+		if !s.claim() {
+			// its address was pasted too, and that one is being finished
+			signInPage(w, false, "This sign-in is already finishing", "magpie shows the account when it's done.")
+			return
+		}
 		select {
 		case got <- callback{uid, tok}:
 		default:
@@ -53,6 +58,9 @@ func startZedSignIn(s *signInFlow) error {
 	s.mu.Lock()
 	s.st.URL = zed.SignInURL(zedSite, port, pub, systemID)
 	s.srv, s.stop = srv, cancel
+	s.redirect = fmt.Sprintf("http://127.0.0.1:%d", port)
+	// a browser that can't reach the port finishes it with its address
+	s.st.PasteCallback = true
 	s.mu.Unlock()
 	go func() { _ = srv.Serve(ln) }()
 

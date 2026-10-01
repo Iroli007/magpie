@@ -74,6 +74,7 @@ type aRequest struct {
 	OutputConfig *struct {
 		Effort string `json:"effort,omitempty"`
 	} `json:"output_config,omitempty"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 func parseAnthropic(body []byte) (*Request, error) {
@@ -83,6 +84,9 @@ func parseAnthropic(body []byte) (*Request, error) {
 	}
 	r := &Request{Model: a.Model, System: stringOrText(a.System), MaxTokens: a.MaxTokens,
 		Temp: a.Temperature, TopP: a.TopP, Stop: a.StopSequences, Stream: a.Stream}
+	if len(a.Metadata) > 0 && string(a.Metadata) != "null" {
+		r.Metadata = a.Metadata
+	}
 	for _, m := range a.Messages {
 		msg := Message{Role: m.Role}
 		var s string
@@ -383,6 +387,9 @@ func buildAnthropic(r *Request, model string) []byte {
 	if len(r.Stop) > 0 {
 		out["stop_sequences"] = r.Stop
 	}
+	if len(r.Metadata) > 0 {
+		out["metadata"] = r.Metadata
+	}
 	if len(r.Tools) > 0 || r.WebSearch {
 		var tools []map[string]any
 		for _, t := range r.Tools {
@@ -510,7 +517,7 @@ func decodeAnthropic(data string, emit func(Event)) error {
 		}
 		emit(Event{Kind: KUsage, Usage: ev.Usage.usage()})
 	case "error":
-		emit(Event{Kind: KError, Text: ev.Error.Message})
+		emit(Event{Kind: KError, Text: ev.Error.Message, Code: refusedCode(data)})
 	}
 	return nil
 }
@@ -567,15 +574,25 @@ type anthropicEncoder struct {
 	col     collector
 }
 
+// anthropicID is a reply's id as Anthropic's API gives one, msg_…: an
+// OpenAI-shaped upstream's chatcmpl-… (a plugin's provider, a relay) reads
+// as a built-in's does.
+func anthropicID(id string) string {
+	if id == "" {
+		return "msg_" + newID()
+	}
+	if strings.HasPrefix(id, "msg_") {
+		return id
+	}
+	return "msg_" + strings.TrimPrefix(id, "chatcmpl-")
+}
+
 func (e *anthropicEncoder) start(ev Event) {
 	if e.started {
 		return
 	}
 	e.started = true
-	id := ev.MsgID
-	if id == "" {
-		id = "msg_" + newID()
-	}
+	id := anthropicID(ev.MsgID)
 	model := ev.Model
 	if model == "" {
 		model = e.model
@@ -664,7 +681,11 @@ func (e *anthropicEncoder) event(ev Event) {
 		e.index++
 	case KError:
 		e.close()
-		e.w.event("error", map[string]any{"type": "error", "error": map[string]any{"type": "api_error", "message": ev.Text}})
+		failed := map[string]any{"type": "api_error", "message": ev.Text}
+		if ev.Code != "" {
+			failed["code"] = ev.Code // a refusal, for the next account to be asked
+		}
+		e.w.event("error", map[string]any{"type": "error", "error": failed})
 	}
 	e.col.add(ev)
 }
@@ -703,10 +724,7 @@ func renderAnthropic(res Result, model string) []byte {
 				searchResultBlock(id, p.Hits))
 		}
 	}
-	id := res.ID
-	if id == "" {
-		id = "msg_" + newID()
-	}
+	id := anthropicID(res.ID)
 	if res.Model != "" {
 		model = res.Model
 	}

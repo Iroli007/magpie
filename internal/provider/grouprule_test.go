@@ -228,6 +228,7 @@ func TestRuledEntry(t *testing.T) {
 // doesn't have is refused.
 func TestSaveGroupRules(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, id := range []string{"a", "b"} {
 		if err := Save(Provider{ID: id, Name: id, Key: "k", Chat: "http://127.0.0.1:1/v1", Models: []string{"m", "big"}}); err != nil {
@@ -251,6 +252,7 @@ func TestSaveGroupRules(t *testing.T) {
 // another group, never itself. Without intents it keeps none.
 func TestSaveGroupClassifier(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, id := range []string{"a", "b"} {
 		if err := Save(Provider{ID: id, Name: id, Key: "k", Chat: "http://127.0.0.1:1/v1", Models: []string{"m", "big"}}); err != nil {

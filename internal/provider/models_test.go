@@ -14,6 +14,7 @@ import (
 func TestExplicitTextOnlyBeatsCrossProviderImageGuess(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	if err := os.MkdirAll(filepath.Dir(catalog.CachePath()), 0o755); err != nil {
@@ -114,6 +115,7 @@ func TestOffKeyIsNotFetched(t *testing.T) {
 	isolate(t)
 	h := t.TempDir()
 	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(h, ".cache"))
 	t.Setenv("PATH", h)
@@ -199,6 +201,7 @@ func modelNamed(ms []catalog.Model, id string) (catalog.Model, bool) {
 func TestRejectsTemperatureFromFetchedList(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CACHE_HOME", home)
 
 	no, yes := false, true

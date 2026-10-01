@@ -35,7 +35,9 @@ func sideLogins(agent, ownUser string, usable func(savedLogin) bool) []sideLogin
 	loginsMu.Lock()
 	defer loginsMu.Unlock()
 	ls := readLogins()
-	if ownUser != "" {
+	// moved onto its plugin, the agent's own sign-in is the plugin's: its
+	// row, set aside, is kept for going back
+	if ownUser != "" && !movedAgent(agent) {
 		found := false
 		for i := range ls {
 			if ls[i].Agent == agent && ls[i].own() {
@@ -272,7 +274,7 @@ func addSideLogin(l savedLogin, ownUser string, dup func(savedLogin)) error {
 // agent's own store as Claude Code's and Codex's are.
 func sideAgent(agent string) bool {
 	switch agent {
-	case "grok", "copilot", "zcode", "kiro", "devin", "workbuddy", WorkBuddyAIID, CommandCodePlanID, "gemini", "antigravity", "qoder", "zed", "factory", MiMoID:
+	case "grok", "copilot", "zcode", "kiro", "devin", "workbuddy", WorkBuddyAIID, CommandCodePlanID, "gemini", "antigravity", "qoder", QoderCNID, "zed", "factory", MiMoID:
 		return true
 	}
 	return false

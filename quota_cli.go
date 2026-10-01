@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,16 +17,23 @@ import (
 const quotaUsage = `usage: magpie quota [<provider>…] [--json]
        magpie quota reset [<codex account>] [--yes]
        magpie quota auto-reset [<codex account>] [on|off]
+       magpie quota alert [<percent>|off] [--balance <amount>|off]
   what is left of every subscription, plan and key magpie has: each window's use and
   when it starts again, and each key's balance, asked of the vendors now (or less than
   a minute ago). --json is for scripts and agents; the gateway answers the same at
-  GET http://127.0.0.1:3425/v1/magpie/quotas
+  GET http://127.0.0.1:3425/v1/magpie/quotas, and to another machine only while magpie is
+  shared on the local network, with its key as the API key (Authorization: Bearer or x-api-key)
   A Codex account that holds rate-limit resets says how many; quota reset spends one,
   starting the account's current windows again (the one Codex is signed in to unless
   named). It can't be undone, so it asks first; --yes doesn't. quota auto-reset on lets
   the account spend one by itself when its weekly window is used up and no other
   account can take a request, one a week at most (the five hours running out never
-  does); off stops it, and alone it says which accounts do. It is off until turned on.`
+  does); off stops it, and alone it says which accounts do. It is off until turned on.
+  quota alert 80 has the magpie app notify when any window of a subscription or plan
+  reaches 80% used, once each time the window runs (not windows set aside, such as
+  on-demand spending); --balance 5 when a balance falls to 5 or under, in its own
+  currency or credits, once until topped up past it. off turns either off, and alone
+  it says what is set. Both are off until set.`
 
 // quotaCmd: magpie quota [<provider>…] [--json]
 func quotaCmd(args []string) error {
@@ -34,6 +42,9 @@ func quotaCmd(args []string) error {
 	}
 	if len(args) > 1 && args[1] == "auto-reset" {
 		return quotaAutoResetCmd(args[2:])
+	}
+	if len(args) > 1 && args[1] == "alert" {
+		return quotaAlertCmd(args[2:])
 	}
 	asJSON := false
 	var only []string
@@ -51,6 +62,7 @@ func quotaCmd(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	qs := []provider.Quota{}
+	provider.AskClaudeUsage()
 	for _, q := range provider.QuotaReport(ctx, time.Now()) {
 		if len(only) == 0 || quotaMatches(q, only) {
 			qs = append(qs, q)
@@ -228,6 +240,70 @@ func quotaAutoResetCmd(args []string) error {
 		fmt.Println(green.Render("✓"), user+":", "uses a reset by itself once its week is used up and no other account can answer, one a week at most")
 	} else {
 		fmt.Println(green.Render("✓"), user+":", "no longer uses a reset by itself")
+	}
+	return nil
+}
+
+// quotaAlertCmd: magpie quota alert [<percent>|off] [--balance <amount>|off]
+// — the usage alerts Settings sets (#368), the notifications the app shows.
+func quotaAlertCmd(args []string) error {
+	s := settings.Load()
+	changed := false
+	for i := 0; i < len(args); i++ {
+		a := strings.ToLower(strings.TrimSpace(args[i]))
+		switch {
+		case a == "help" || a == "-h" || a == "--help":
+			fmt.Println(quotaUsage)
+			return nil
+		case a == "--balance" || strings.HasPrefix(a, "--balance="):
+			v, ok := strings.CutPrefix(a, "--balance=")
+			if !ok {
+				if i+1 >= len(args) {
+					return fmt.Errorf("--balance needs an amount, or off")
+				}
+				i++
+				v = strings.ToLower(strings.TrimSpace(args[i]))
+			}
+			if v == "off" {
+				s.BalanceAlert = 0
+			} else {
+				n, err := strconv.ParseFloat(v, 64)
+				if err != nil || n <= 0 {
+					return fmt.Errorf("a balance alert is at an amount over 0, or off, not %q", v)
+				}
+				s.BalanceAlert = n
+			}
+			changed = true
+		case a == "off":
+			s.UsageAlert = 0
+			changed = true
+		default:
+			n, err := strconv.Atoi(strings.TrimSuffix(a, "%"))
+			if err != nil || n < 1 || n > 100 {
+				return fmt.Errorf("a usage alert is at a percentage from 1 to 100, or off, not %q", args[i])
+			}
+			s.UsageAlert = n
+			changed = true
+		}
+	}
+	if changed {
+		if err := settings.Save(s); err != nil {
+			return err
+		}
+		fmt.Print(green.Render("✓") + " ")
+	}
+	if s.UsageAlert > 0 {
+		fmt.Printf("notifies when a window reaches %d%% used, once each time it runs", s.UsageAlert)
+	} else {
+		fmt.Print("no usage alert")
+	}
+	if s.BalanceAlert > 0 {
+		fmt.Printf("; and when a balance falls to %s or under, once until topped up\n", strconv.FormatFloat(s.BalanceAlert, 'f', -1, 64))
+	} else {
+		fmt.Println("; no balance alert")
+	}
+	if s.UsageAlert > 0 || s.BalanceAlert > 0 {
+		fmt.Println(muted.Render("  the notifications come from the magpie app, while it runs"))
 	}
 	return nil
 }

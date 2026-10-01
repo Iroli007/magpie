@@ -29,7 +29,7 @@ const providerUsage = `usage:
   magpie provider <id>                    show one provider and its models
   magpie provider add <preset> <key>      add a preset vendor   e.g. magpie provider add deepseek sk-…
                                           again, it adds another (deepseek-2); k=v pairs too: id, name, header.X-Foo
-  magpie provider add <name> k=v…         add a custom vendor   k: url, anthropic, responses, key, models, catalog, icon, header.X-Foo, balance, balance.path, balance.token, models.url
+  magpie provider add <name> k=v…         add a custom vendor   k: url, anthropic, responses, key, models, catalog, icon, header.X-Foo, balance, balance.path, balance.token, models.url, search
   magpie provider set <id> k=v…           change a provider's settings, with the same k=v pairs as add
   magpie provider key <id> <key>          change the API key
   magpie provider icon <id> <file|name>   give a custom provider a picture (PNG, JPEG, SVG…) or a built-in icon
@@ -48,6 +48,9 @@ const providerUsage = `usage:
                                     groups as office/…, each request sent on in the API the agent spoke)
        magpie provider add anthropic sk-… id=anthropic-ws2 name="Anthropic WS2" header.anthropic-workspace-id=wrkspc_…
        magpie provider set my-relay models.url=https://relay.example.com/api/models catalog=
+       magpie provider set my-relay search=yes
+                                   (the relay answers Claude Code's WebSearch and Codex's web_search itself:
+                                    those go to it as sent, not through magpie's own search)
        magpie provider add "My Relay" url=https://relay.example.com/v1 key=sk-… balance=https://relay.example.com/api/usage/token balance.path='$data.total_available / 500000'
        magpie provider set my-relay balance.path='(1 - credits.monthlyCredits / 70) %'
        magpie provider set my-relay balance=https://relay.example.com/api/user/self balance.path='$data.quota / 500000' balance.token=<access token> header.New-Api-User=<user id>
@@ -91,7 +94,7 @@ func providers() error {
 			r.key = amber.Render("○ no key")
 		}
 		n := len(p.Exposed())
-		if t, ok := p.Fetched(); ok {
+		if t, ok := p.Listed(); ok {
 			r.models = fmt.Sprintf("%d of %d models", n, len(p.Available())) + muted.Render(" · fetched "+ago(t))
 		} else {
 			r.models = fmt.Sprintf("%d models", n)
@@ -548,7 +551,8 @@ func announce(id string) error {
 
 func showProvider(p provider.Provider) error {
 	kv := func(k, v string) {
-		if v != "" {
+		// a plugin's provider is reached through the plugin, not a URL
+		if v != "" && !strings.HasPrefix(v, "plugin://") {
 			fmt.Printf("  %s %s\n", muted.Render(pad(k, 10)), v)
 		}
 	}
@@ -560,13 +564,23 @@ func showProvider(p provider.Provider) error {
 	kv("chat", p.Chat)
 	kv("responses", p.Responses)
 	kv("anthropic", p.Anthropic)
+	if p.Searches {
+		kv("search", "by itself"+muted.Render("  a client's web search goes to it as sent"))
+	}
 	switch {
 	case p.Account != nil:
 		who := p.Account.User
 		if p.Account.Plan != "" {
 			who += muted.Render("  " + p.Account.Plan)
 		}
-		kv("account", who+muted.Render("  from "+p.Account.Agent+"'s own sign-in"))
+		from := p.Account.Agent + "'s own sign-in"
+		if p.IsPlugin() {
+			from = p.Name + "'s sign-in"
+			if provider.Moved(p.ID) {
+				from = p.ID + "'s own sign-in" // as the built-in said
+			}
+		}
+		kv("account", who+muted.Render("  from "+from))
 	case p.Key != "":
 		kv("key", muted.Render(provider.Mask(p.Key)))
 	case p.Ready():
@@ -595,7 +609,7 @@ func showProvider(p provider.Provider) error {
 	}
 	ms := p.Exposed()
 	src := "models.dev"
-	if t, ok := p.Fetched(); ok {
+	if t, ok := p.Listed(); ok {
 		src = fetchedFrom(p) + " · fetched " + ago(t)
 	}
 	kv("models", fmt.Sprintf("%d exposed of %d %s", len(ms), len(p.Available()), muted.Render("from "+src)))
@@ -655,6 +669,14 @@ func applyPairs(p *provider.Provider, pairs []string) error {
 			p.BalanceToken = v
 		case "models.url":
 			p.ModelsURL = v
+		case "search":
+			// yes: the vendor searches the web by itself, a web search a
+			// client offers going to it as it was sent (a relay in front of
+			// Anthropic's or OpenAI's API)
+			if v != "yes" && v != "no" {
+				return fmt.Errorf("search=yes|no, not %q", v)
+			}
+			p.Searches = v == "yes"
 		case "context":
 			if err := setContext(p, "*", v); err != nil {
 				return err
@@ -772,6 +794,26 @@ func keyNote() string {
 	return "(anything works; the gateway only listens on localhost)"
 }
 
+// containerNote follows the addresses magpie finds for itself in a
+// container, which are the container's own.
+const containerNote = "these are the container's own addresses: other machines use the host's, and MAGPIE_PUBLIC_URL=http://<host>:<port> puts it here"
+
+// shareLines are where other machines reach the gateway while it is shared
+// from Settings, for the banner.
+func shareLines() []string {
+	if s := settings.Load(); !s.LAN || s.LANKey == "" {
+		return nil
+	}
+	var out []string
+	for _, u := range gateway.LANURLs() {
+		out = append(out, muted.Render("  network ")+" "+u)
+	}
+	if gateway.ContainerAddrs() {
+		out = append(out, muted.Render("  "+containerNote))
+	}
+	return out
+}
+
 // serve: `magpie serve` — the gateway alone, in the foreground.
 func serve() error {
 	s := gateway.New()
@@ -781,6 +823,9 @@ func serve() error {
 	fmt.Println(muted.Render("  OpenAI  "), gateway.URL()+"/v1/chat/completions", muted.Render("·"), gateway.URL()+"/v1/responses")
 	fmt.Println(muted.Render("  Anthropic"), gateway.URL()+"/v1/messages")
 	fmt.Println(muted.Render("  key     "), gateway.Token, muted.Render(keyNote()))
+	for _, l := range shareLines() {
+		fmt.Println(l)
+	}
 	n := len(provider.Catalog())
 	if n == 0 {
 		fmt.Println(amber.Render("!"), "no models yet ·", "magpie provider add deepseek sk-…")

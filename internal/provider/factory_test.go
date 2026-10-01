@@ -424,7 +424,7 @@ func factorySend(t *testing.T, p Provider) (int, string) {
 		return res.StatusCode, b
 	}
 	code, b := send()
-	if code == 403 && p.Retry(context.Background(), code, b) {
+	if code == 403 && p.Retry(context.Background(), nil, code, b) {
 		code, b = send()
 	}
 	return code, string(b)
@@ -550,8 +550,8 @@ func TestFactoryOrgRefused(t *testing.T) {
 	if c := factoryKept(t, "cy"); c.Active != "fac_A" {
 		t.Fatalf("cy kept active %q", c.Active)
 	}
-	if p.Retry(context.Background(), 403, []byte(`{"error":{"message":"model not allowed"}}`)) ||
-		p.Retry(context.Background(), 401, []byte(`Requested active organization is not accessible`)) {
+	if p.Retry(context.Background(), nil, 403, []byte(`{"error":{"message":"model not allowed"}}`)) ||
+		p.Retry(context.Background(), nil, 401, []byte(`Requested active organization is not accessible`)) {
 		t.Fatal("retried an unrelated refusal")
 	}
 }
@@ -636,7 +636,7 @@ func TestFactoryForbiddenWithoutOrg(t *testing.T) {
 			return res.StatusCode, b
 		}
 		code, b := do()
-		if code == 403 && p.Retry(context.Background(), code, b) {
+		if code == 403 && p.Retry(context.Background(), nil, code, b) {
 			code, b = do()
 		}
 		return code, string(b)
@@ -702,9 +702,12 @@ func TestFactoryForbiddenWithoutOrg(t *testing.T) {
 		t.Errorf("prem request went to %s", got)
 	}
 
-	// a 403 still answered says what to do; others pass as they are
+	// a 403 still answered says what to do: Factory refuses every agent
+	// but Droid (#242: Claude Code on Opus 5.5, Grok Build on any model),
+	// which signing in again doesn't change; others pass as they are
 	msg := p.Explain("Factory: Forbidden", 403, []byte(forbidden))
-	if !strings.HasPrefix(msg, "Factory: Forbidden — ") || !strings.Contains(msg, "`droid`") || !strings.Contains(msg, "sign in to it again") {
+	if !strings.HasPrefix(msg, "Factory: Forbidden — ") || !strings.Contains(msg, "only from Droid") || !strings.Contains(msg, "Claude Code") ||
+		strings.Contains(msg, "sign in to it again") {
 		t.Errorf("explained: %s", msg)
 	}
 	if got := p.Explain("Factory: overloaded", 529, nil); got != "Factory: overloaded" {

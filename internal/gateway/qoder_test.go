@@ -63,11 +63,11 @@ func qoderUpstream(t *testing.T, lines []string, modelKeys ...string) func() {
 		}
 	}))
 	auth, url, model := qoderAuth, qoderURL, qoderModel
-	qoderAuth = func(ctx context.Context, user string) (*qoder.Credential, error) {
+	qoderAuth = func(ctx context.Context, agent, user string) (*qoder.Credential, error) {
 		return &qoder.Credential{UID: "uid-test", Token: "jt-test", MachineID: "machine-test"}, nil
 	}
-	qoderModel = func(context.Context, string, string) (qoder.ModelInfo, error) { return testQoderModel(t), nil }
-	qoderURL = func() string { return up.URL }
+	qoderModel = func(context.Context, string, string, string) (qoder.ModelInfo, error) { return testQoderModel(t), nil }
+	qoderURL = func(*qoder.Credential) string { return up.URL }
 	return func() { up.Close(); qoderAuth, qoderURL, qoderModel = auth, url, model }
 }
 
@@ -78,14 +78,14 @@ func TestQoderSelectedModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	qoderModel = func(_ context.Context, user, key string) (qoder.ModelInfo, error) {
+	qoderModel = func(_ context.Context, _, user, key string) (qoder.ModelInfo, error) {
 		if user != "selected@x" || key != "other-model" {
 			t.Errorf("selected user/model %s %s", user, key)
 		}
 		return ms[0], nil
 	}
 	s := New()
-	ch, status, msg := s.askQoder("other-model", "selected@x")(context.Background(), &Request{Model: "other-model", Effort: "max"})
+	ch, status, msg := s.askQoder("qoder", "other-model", "selected@x")(context.Background(), &Request{Model: "other-model", Effort: "max"})
 	if ch == nil {
 		t.Fatalf("ask: %d %s", status, msg)
 	}
@@ -98,10 +98,10 @@ func TestQoderSelectedModel(t *testing.T) {
 	if gjson.GetBytes(b, "model_config.custom_field").Int() != 17 || gjson.GetBytes(b, "parameters.context_length").Int() != 64000 || gjson.GetBytes(b, "parameters.enable_thinking").Bool() || gjson.GetBytes(b, "parameters.reasoning_effort").Exists() {
 		t.Fatalf("selected config: %s", b)
 	}
-	qoderModel = func(context.Context, string, string) (qoder.ModelInfo, error) {
+	qoderModel = func(context.Context, string, string, string) (qoder.ModelInfo, error) {
 		return qoder.ModelInfo{}, errors.New("unknown model")
 	}
-	ch, status, _ = s.askQoder("unknown", "selected@x")(context.Background(), &Request{})
+	ch, status, _ = s.askQoder("qoder", "unknown", "selected@x")(context.Background(), &Request{})
 	if ch != nil || status != 400 {
 		t.Fatalf("unknown model: %d", status)
 	}
@@ -284,7 +284,7 @@ func TestQoderEnvelopeErrors(t *testing.T) {
 						req := &Request{Model: "qfmodel", Stream: stream}
 						ctx, cancel := context.WithCancel(context.Background())
 						defer cancel()
-						events, _, _ := s.askQoder("qfmodel", "test")(ctx, req)
+						events, _, _ := s.askQoder("qoder", "qfmodel", "test")(ctx, req)
 						w := httptest.NewRecorder()
 						var usage Usage
 						code, msg := relayQoder(w, proto, req, events, &usage, cancel)
@@ -487,8 +487,8 @@ func TestQoderCredentialStatus(t *testing.T) {
 		{errors.New("dial tcp: connection refused"), 502},
 		{fmt.Errorf("one@x's Qoder sign-in has expired — sign in again (%w)", provider.ErrQoderSignIn), 401},
 	} {
-		qoderAuth = func(context.Context, string) (*qoder.Credential, error) { return nil, tt.err }
-		ch, status, _ := s.askQoder("qfmodel", "one@x")(context.Background(), &Request{Model: "qfmodel"})
+		qoderAuth = func(context.Context, string, string) (*qoder.Credential, error) { return nil, tt.err }
+		ch, status, _ := s.askQoder("qoder", "qfmodel", "one@x")(context.Background(), &Request{Model: "qfmodel"})
 		if ch != nil || status != tt.want {
 			t.Errorf("%v: status %d, want %d", tt.err, status, tt.want)
 		}

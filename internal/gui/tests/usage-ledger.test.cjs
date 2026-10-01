@@ -19,11 +19,11 @@ const assets = path.resolve(__dirname, "../assets");
 const now = Date.now();
 
 // 130 requests, newest first: a swapped one, one under a dated name, a
-// failure, one from before Requested was kept, then plain ones
+// failure (passed on by another computer's magpie), one from before Requested was kept, then plain ones
 const ROWS = [
   { route_id: 123, t: new Date(now - 60e3).toISOString(), agent: "codex", agentName: "Codex", icon: "codex-color", provider: "relay", providerName: "Relay", host: "team", req: "sol", model: "gpt-6-sol", served: "gpt-6-luna", swapped: true, effort: "high", in: 12840, out: 912, cache_read: 8192, reasoning: 300, ms: 4210, ttft_ms: 820, status: 200, session: "019a2b", cost: 0.0421, priced: true },
   { route_id: 999, t: new Date(now - 120e3).toISOString(), agent: "claude", agentName: "Claude Code", icon: "claudecode-color", provider: "anthropic", providerName: "Claude", host: "ann@example.com", req: "sonnet", model: "claude-sonnet-5", served: "claude-sonnet-5-20260801", effort: "", in: 3021, out: 440, cache_write: 2048, cache_read: 61000, ms: 2380, status: 200, cost: 0.0312, priced: true },
-  { route_id: 123, t: new Date(now - 180e3).toISOString(), agent: "codex", agentName: "Codex", icon: "codex-color", provider: "relay", providerName: "Relay", host: "team", req: "sol", model: "gpt-6-sol", in: 0, out: 0, ms: 610, status: 429, cost: 0, priced: false },
+  { route_id: 123, t: new Date(now - 180e3).toISOString(), agent: "codex", agentName: "Codex", via: "office-mac", icon: "codex-color", provider: "relay", providerName: "Relay", host: "team", req: "sol", model: "gpt-6-sol", in: 0, out: 0, ms: 610, status: 429, cost: 0, priced: false },
   { t: new Date(now - 240e3).toISOString(), agent: "claude", agentName: "Claude Code", icon: "claudecode-color", provider: "deepseek", providerName: "DeepSeek", model: "deepseek-v4", in: 900, out: 120, ms: 1320, status: 200, cost: 0, priced: false },
 ];
 for (let i = 0; i < 126; i++) {
@@ -100,14 +100,14 @@ const L = {
     cols: ["Time", "Agent", "Requested", "Provider · account", "Sent", "Served", "Effort", "In", "Out", "Cache write", "Cache read", "Cost", "Duration", "Status"],
     sum: "130 requests", pager: "1–100 of 130", older: "Older", newer: "Newer", failed: "Failed", export: "Export CSV",
     why: "The vendor was asked for gpt-6-sol, and its reply says gpt-6-luna answered it", saved: "Saved 130 requests to ~/Downloads/magpie-requests-30d-2026-09-29.csv",
-    none: "No requests match these filters.", bad: "Failed: the agent was answered 429",
+    none: "No requests match these filters.", bad: "Failed: the agent was answered 429", via: "Codex · via office-mac",
   },
   zh: {
     tabs: ["概览", "请求", "会话"],
     cols: ["时间", "Agent", "请求模型", "供应商 · 账号", "发送模型", "实际模型", "推理强度", "输入", "输出", "缓存写入", "缓存读取", "费用", "耗时", "状态"],
     sum: "130 个请求", pager: "第 1–100 条，共 130 条", older: "较早", newer: "较新", failed: "失败", export: "导出 CSV",
     why: null, saved: "已将 130 个请求保存到 ~/Downloads/magpie-requests-30d-2026-09-29.csv",
-    none: "没有符合这些筛选条件的请求。", bad: "失败：Agent 收到的是 429",
+    none: "没有符合这些筛选条件的请求。", bad: "失败：Agent 收到的是 429", via: "Codex · 来自 office-mac",
   },
 };
 
@@ -174,6 +174,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const bad = page.locator(".led tr.bad td").last();
         assert.equal((await bad.textContent()).trim(), "429");
         assert.equal(await bad.getAttribute("title"), w.bad);
+        // its agent is on another computer, whose magpie passed it on (Jorben on Discord)
+        assert.equal(await page.locator(".led tr.bad td").nth(1).textContent(), w.via);
         const [dotBad, dotOk] = await page.evaluate(() => [
           getComputedStyle(document.querySelector(".led tr.bad .st .dot")).backgroundColor,
           getComputedStyle(document.querySelector(".led tbody tr:not(.bad) .st .dot")).backgroundColor,
@@ -262,6 +264,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await t.test(lang + ": request routing links", async () => {
         const asked = [];
         const { page, errors } = await open(lang, "light", asked);
+        const lookups = [];
+        page.on("request", req => { if (req.url().includes("/api/gateway/route?")) lookups.push(new URL(req.url())); });
+        const originalPeriod = asked.at(-1).get("period");
         const routeTitle = lang === "en" ? "View routing" : "查看路由";
         const usageTitle = lang === "en" ? "View usage" : "查看用量";
         assert.equal(await page.locator(".led tbody tr").nth(3).locator("button").count(), 0, "old rows have no route link");
@@ -269,6 +274,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.locator("#view-routing").waitFor({ state: "visible" });
         await page.locator(".rt-log-head").getByText(usageTitle, { exact: true }).waitFor();
         assert.match(await page.locator(".rt-steps").textContent(), /gpt-6-sol/);
+        assert.equal(lookups[0].searchParams.get("day"), ROWS[0].t.slice(0,10));
         // History stays usable even when another process serves the gateway.
         await page.waitForTimeout(5200);
         assert(await page.locator(".rt-off").isHidden());
@@ -278,17 +284,48 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await lastAsked(page, asked, (q) => q.get("route") === "123" && q.get("period") === "all");
         await page.waitForFunction(() => document.querySelectorAll(".led tbody tr").length === 2);
         assert(await page.locator("#ledRoute").isVisible());
+        assert.match(await page.locator("#ledRouteLabel").textContent(), /gpt-6-sol/);
+        assert(!await page.locator("#ledRouteLabel").textContent().then(text=>text.includes("#123")));
         assert.equal(await scrolled(page), 0, "return keeps the Usage view position");
         await page.locator("#ledExport").click();
         await lastAsked(page, asked, (q) => q.method === "POST" && q.get("route") === "123");
-        await page.locator("#ledRoute").click();
-        await lastAsked(page, asked, (q) => !q.has("route"));
+        await page.locator("#ledRouteClear").click();
+        await lastAsked(page, asked, (q) => !q.has("route") && q.get("period") === originalPeriod);
         await page.waitForFunction(() => document.querySelectorAll(".led tbody tr").length === 100);
         // A pruned request stays in Usage and explains why its route cannot open.
         await page.locator(".led tbody tr").nth(1).getByTitle(routeTitle).click();
         await page.waitForFunction((msg) => document.querySelector("#status").textContent === msg,
           lang === "en" ? "Routing history for this request is no longer available." : "此请求的路由历史已不可用。");
         assert(await page.locator("#view-usage").isVisible());
+        assert.deepEqual(errors, []);
+        await page.close();
+      });
+
+      await t.test(lang + ": clearing the route restores prior filters", async () => {
+        const asked = [];
+        const { page, errors } = await open(lang, "light", asked);
+        await page.evaluate(() => {
+          period = "7d"; ledAgent = "codex"; ledFailed = true; ledQuery = "sol"; ledOffset = 100;
+          window.openUsageRoute({ id: 123, time: new Date().toISOString(), model: "gpt-6-sol" });
+        });
+        await lastAsked(page, asked, q=>q.get("route") === "123");
+        await page.locator("#ledRouteClear").click();
+        await lastAsked(page, asked, q=>!q.has("route") && q.get("period") === "7d" && q.get("agent") === "codex" && q.get("failed") === "1" && q.get("q") === "sol" && q.get("offset") === "100");
+        assert.equal(await page.locator("#ledQ").inputValue(), "sol");
+        assert.deepEqual(errors, []);
+        await page.close();
+      });
+      await t.test(lang + ": newest live route needs no return-to-live button", async () => {
+        const asked = [];
+        const { page, errors } = await open(lang, "light", asked);
+        await page.route("**/api/gateway/trace?*", async route => {
+          await page.waitForTimeout(100);
+          await route.fulfill({json:{mine:true, seq:1, routes:[{id:123,time:ROWS[0].t,agent:"codex",model:"gpt-6-sol",provider:"relay",order:[],tries:[],done:true,status:200}],totals:{requests:1,rerouted:0,errors:0},now:new Date().toISOString()}}).catch(()=>{});
+        });
+        await page.waitForTimeout(5500);
+        await page.locator(".led tbody tr").first().getByTitle(lang === "en" ? "View routing" : "查看路由").click();
+        await page.locator("#view-routing").waitFor({state:"visible"});
+        assert.equal(await page.locator(".rt-log-head").getByText(lang === "en" ? "Back to live" : "回到实时", {exact:true}).count(), 0);
         assert.deepEqual(errors, []);
         await page.close();
       });

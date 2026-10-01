@@ -75,7 +75,10 @@ type signInFlow struct {
 	kiro     *kiroFlow
 	site     string // where to sign in, for an agent with more than one (ZCode: "zai" or "bigmodel")
 	plugin   string // a plugin's sign-in session, finished with the code pasted back
-	done     chan struct{}
+	// claimed is a callback being traded for the account: the browser's own
+	// or a pasted address, whichever came first
+	claimed bool
+	done    chan struct{}
 }
 
 var signIns = struct {
@@ -268,9 +271,10 @@ func (s *signInFlow) begin() error {
 		if err := startCommandCodeSignIn(s); err != nil {
 			return err
 		}
-	case "qoder":
-		// Qoder's device flow, run by magpie and kept in its own store
-		if err := startQoderSignIn(s); err != nil {
+	case "qoder", QoderCNID:
+		// Qoder's device flow on the account's site (qoder.com or qoder.cn),
+		// run by magpie and kept in its own store
+		if err := startQoderSignIn(s, qoderSiteOf(agent)); err != nil {
 			return err
 		}
 	case "zed":
@@ -311,6 +315,9 @@ func (s *signInFlow) begin() error {
 		srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 		s.mu.Lock()
 		s.srv = srv
+		// a browser that can't reach this port (magpie on a server, in
+		// Docker) ends on a page that won't load: its address finishes it
+		s.st.PasteCallback = true
 		s.mu.Unlock()
 		go func() { _ = srv.Serve(ln) }()
 	}
@@ -358,9 +365,8 @@ func CancelSignIn(id string) {
 }
 
 // SubmitSignInCallback finishes a browser sign-in whose callback could not
-// reach this machine, or a plugin's with the code its page showed. No
-// built-in sign-in takes a callback now (PasteCallback is never set); the
-// route and the page's field stay for one that will.
+// reach this machine — the address the browser ended on, pasted — or a
+// plugin's with the code its page showed.
 func SubmitSignInCallback(id, raw string) error {
 	signIns.Lock()
 	s, ok := signIns.m[id]
@@ -371,7 +377,128 @@ func SubmitSignInCallback(id, raw string) error {
 	if s.plugin != "" {
 		return s.pluginCode(raw)
 	}
-	return errors.New("this sign-in can't be finished from a pasted address")
+	return s.pastedCallback(raw)
+}
+
+// pastedCallback takes the address a sign-in's browser was sent back to,
+// for a magpie that browser can't reach. Only this sign-in's own address is
+// taken: its port and path, and its state. It goes through the handler the
+// callback port serves, so it is checked and traded for the account just as
+// the browser's own would be, and only once: whichever of the two comes
+// first finishes the sign-in, and the other waits for how that went.
+func (s *signInFlow) pastedCallback(raw string) error {
+	s.mu.Lock()
+	st, srv, redirect := s.st, s.srv, s.redirect
+	s.mu.Unlock()
+	if !st.PasteCallback || srv == nil {
+		return errors.New("this sign-in can't be finished from a pasted address")
+	}
+	if st.State != "waiting" {
+		return errors.New("this sign-in is over; start it again")
+	}
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "http" || u.RawQuery == "" {
+		return errors.New("paste the whole address the browser ended on, starting with http://")
+	}
+	if !s.ownCallback(u, redirect) {
+		return errors.New("that address isn't from this sign-in: paste the one its browser tab ended on")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+u.Host+u.RequestURI(), nil)
+	if err != nil {
+		return err
+	}
+	rep := &pastedReply{h: http.Header{}}
+	srv.Handler.ServeHTTP(rep, req)
+
+	s.mu.Lock()
+	claimed := s.claimed
+	s.mu.Unlock()
+	if !claimed {
+		// Kiro's page sends an AWS sign-in on to AWS: the next page to open
+		if loc := rep.h.Get("Location"); rep.code/100 == 3 && strings.HasPrefix(loc, "https://") && s.kiro != nil {
+			s.mu.Lock()
+			s.st.URL = loc
+			s.mu.Unlock()
+			return nil
+		}
+		if st := s.status(); st.State == "failed" {
+			return errors.New(st.Error)
+		}
+		return errors.New("that address didn't finish the sign-in; start it again")
+	}
+	select {
+	case <-s.done:
+	case <-ctx.Done():
+		return errors.New("the sign-in is still finishing; magpie shows the account when it's done")
+	}
+	switch st := s.status(); st.State {
+	case "done":
+		return nil
+	case "failed":
+		return errors.New(st.Error)
+	}
+	return errors.New("the sign-in was canceled")
+}
+
+// ownCallback says whether a pasted address is where this sign-in's page
+// sends the browser back to.
+func (s *signInFlow) ownCallback(u *url.URL, redirect string) bool {
+	want, err := url.Parse(redirect)
+	if err != nil || u.Port() != want.Port() {
+		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "localhost", "127.0.0.1", "::1":
+	default:
+		return false
+	}
+	q := u.Query()
+	switch {
+	case s.st.Agent == "zed":
+		// no state: the token in it is encrypted to this sign-in's key
+		return q.Get("user_id") != "" && q.Get("access_token") != ""
+	case s.kiro != nil:
+		if u.Path != "/oauth/callback" && u.Path != "/signin/callback" {
+			return false
+		}
+		s.mu.Lock()
+		aws := s.kiro.state
+		s.mu.Unlock()
+		return q.Get("state") == s.state || (aws != "" && q.Get("state") == aws)
+	}
+	return u.Path == want.Path && q.Get("state") == s.state
+}
+
+// pastedReply is what the callback handler answers a pasted address; only
+// its status and where it sends the browser on to count.
+type pastedReply struct {
+	h    http.Header
+	code int
+}
+
+func (p *pastedReply) Header() http.Header { return p.h }
+func (p *pastedReply) WriteHeader(code int) {
+	if p.code == 0 {
+		p.code = code
+	}
+}
+func (p *pastedReply) Write(b []byte) (int, error) {
+	p.WriteHeader(http.StatusOK)
+	return len(b), nil
+}
+
+// claim takes a sign-in's callback for one caller: the browser's own and a
+// pasted address can both arrive, and a code is traded only once.
+func (s *signInFlow) claim() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.st.State != "waiting" || s.claimed {
+		return false
+	}
+	s.claimed = true
+	return true
 }
 
 // WaitSignIn blocks until a sign-in is over, for the command line.
@@ -461,6 +588,11 @@ func (s *signInFlow) callback(w http.ResponseWriter, r *http.Request) {
 	if q.Get("state") != s.state || q.Get("code") == "" {
 		// not ours: someone else's page, or a stale tab
 		signInPage(w, false, "This link isn't from magpie's sign-in", "Start it again from magpie.")
+		return
+	}
+	if !s.claim() {
+		// its address was pasted too, and that one is being finished
+		signInPage(w, false, "This sign-in is already finishing", "magpie shows the account when it's done.")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)

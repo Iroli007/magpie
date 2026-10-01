@@ -12,19 +12,20 @@ import (
 
 // Account endpoints use the device token, independently of the chat job token.
 func qoderLoginQuota(ctx context.Context, l Login) SubscriptionQuota {
-	q := SubscriptionQuota{Provider: "qoder", User: l.User, Name: "Qoder", Icon: "qoder", Plan: l.Plan, Windows: []QuotaWindow{}}
-	c, err := QoderCredential(ctx, l.User)
+	site := qoder.SiteOf(l.Agent)
+	q := SubscriptionQuota{Provider: site.ID, User: l.User, Name: site.Name, Icon: "qoder", Plan: l.Plan, Windows: []QuotaWindow{}}
+	c, err := QoderCredentialOf(ctx, site.ID, l.User)
 	if err != nil {
 		q.Error = err.Error()
 		return q
 	}
-	raw, err := qoder.FetchUsage(ctx, qoderClient, "", c.DeviceToken)
+	raw, err := qoder.FetchUsage(ctx, qoderClient, site.OpenAPI, c.DeviceToken)
 	var status *qoder.UsageHTTPError
 	if errors.As(err, &status) && (status.StatusCode == 401 || status.StatusCode == 403) {
 		var token string
-		token, err = qoderRefreshDevice(ctx, l.User, c.DeviceToken)
+		token, err = qoderRefreshDevice(ctx, site.ID, l.User, c.DeviceToken)
 		if err == nil {
-			raw, err = qoder.FetchUsage(ctx, qoderClient, "", token)
+			raw, err = qoder.FetchUsage(ctx, qoderClient, site.OpenAPI, token)
 		}
 	}
 	if err != nil {
@@ -38,16 +39,17 @@ func qoderLoginQuota(ctx context.Context, l Login) SubscriptionQuota {
 	return q
 }
 
-func qoderRefreshDevice(ctx context.Context, user, attempted string) (string, error) {
+func qoderRefreshDevice(ctx context.Context, agent, user, attempted string) (string, error) {
+	site := qoder.SiteOf(agent)
 	qoderMu.Lock()
 	defer qoderMu.Unlock()
-	l, found := qoderLookup(user)
+	l, found := qoderLookup(agent, user)
 	if !found {
-		return "", fmt.Errorf("no Qoder account %q", user)
+		return "", fmt.Errorf("no %s account %q", site.Name, user)
 	}
 	c, ok, pending := qoderCurrent(l)
 	if !ok {
-		return "", fmt.Errorf("Qoder: unreadable sign-in")
+		return "", fmt.Errorf("%s: unreadable sign-in", site.Name)
 	}
 	if c.DeviceToken != attempted {
 		if pending {
@@ -59,19 +61,30 @@ func qoderRefreshDevice(ctx context.Context, user, attempted string) (string, er
 	}
 	// the device refresh token rotates too: keep its reply past the caller
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), qoderRefreshTimeout)
-	dt, err := qoder.RefreshDeviceToken(rctx, qoderClient, "", c.DeviceRefresh)
+	dt, err := qoder.RefreshDeviceToken(rctx, qoderClient, site.OpenAPI+qoder.DeviceTokenRefreshPath, c.DeviceRefresh)
 	cancel()
+	if err != nil && c.DeviceChat {
+		// the device token is the chat token too: a refused one is the sign-in gone
+		var refused *qoder.DeviceTokenRefreshHTTPError
+		if errors.As(err, &refused) {
+			err = &qoder.JobTokenRefreshHTTPError{StatusCode: refused.StatusCode}
+		}
+		return "", qoderRefreshFailed(agent, user, err)
+	}
 	if err != nil {
 		// The device token serves only the account pages (usage); chat
 		// runs on the job token, so a refused one doesn't lapse the account.
 		var refused *qoder.DeviceTokenRefreshHTTPError
 		if errors.As(err, &refused) && (refused.StatusCode == http.StatusUnauthorized || refused.StatusCode == http.StatusForbidden) {
-			return "", fmt.Errorf("Qoder usage is unavailable: Qoder refused the account-page sign-in (chat still works) — sign in again to see usage (%w)", err)
+			return "", fmt.Errorf("%[1]s usage is unavailable: %[1]s refused the account-page sign-in (chat still works) — sign in again to see usage (%[2]w)", site.Name, err)
 		}
 		return "", err
 	}
 	c.DeviceToken, c.DeviceRefresh = dt.Token, dt.RefreshToken
-	if err := qoderPersist(l, c, false); err != nil {
+	if c.DeviceChat { // the pair it spent was the chat pair too
+		c.Token, c.RefreshToken, c.ExpiresAt = dt.Token, dt.RefreshToken, qoder.DeviceExpiry(*dt).UnixMilli()
+	}
+	if err := qoderPersist(l, c, c.DeviceChat); err != nil {
 		return "", err
 	}
 	return c.DeviceToken, nil

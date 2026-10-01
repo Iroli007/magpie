@@ -8,6 +8,7 @@ import (
 func TestContextSetByUser(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	// set, not empty: a group saved lists what Devin's CLI reports, and
 	// Devin given an empty one writes its config into the working directory
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))

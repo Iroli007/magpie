@@ -21,15 +21,20 @@ import (
 func init() {
 	movers["kiro"] = &mover{
 		pkg:    "@magpie-community/opencode-kiro-auth",
+		min:    "0.1.5", // a failure's status and its sign-in mark as the built-in's
 		agents: []string{"kiro"},
 		out: func() ([]Moving, error) {
 			var out []Moving
 			key := kiroKey()
 			if key != "" {
-				out = append(out, Moving{User: "Kiro API key", First: true, On: true, Auth: map[string]any{"type": "api", "key": key}})
+				// named as the built-in named it, which per-account proxies
+				// and headers are keyed on
+				out = append(out, Moving{User: "Kiro API key", First: true, On: true, Auth: map[string]any{"type": "api", "key": key, "accountId": "Kiro API key"}})
 			}
 			for _, l := range kiroLogins() {
-				m := Moving{User: l.User, First: l.Active && key == "", On: l.On, Lapsed: l.Lapsed != ""}
+				// with a key, the built-in used nothing else: the accounts
+				// go along off, the key alone in use
+				m := Moving{User: l.User, First: l.Active && key == "", On: l.On && key == "", Lapsed: l.Lapsed != "", Plan: l.Plan}
 				if l.Home == "" {
 					m.Own = true
 					m.Auth = map[string]any{"type": "oauth", "source": "kiro", "access": "", "refresh": "", "expires": 0, "accountId": l.User}
@@ -47,11 +52,8 @@ func init() {
 		back: func(ls []savedLogin, user string, auth map[string]any) ([]savedLogin, string, error) {
 			switch {
 			case str(auth["type"]) == "api":
-				// the key goes back onto the provider (give, or here for
+				// the key goes back onto the provider (give, or settle for
 				// one saved in the plugin since)
-				if k := str(auth["key"]); k != "" && kiroKey() == "" {
-					return ls, "", setKiroKey(k)
-				}
 				return ls, "", nil
 			case str(auth["source"]) != "":
 				// kiro-cli's or the IDE's: nothing of it was the plugin's
@@ -100,6 +102,14 @@ func init() {
 				return nil, nil
 			}
 			return json.RawMessage(jsonText(k)), setKiroKey("")
+		},
+		settle: func(auths map[string]map[string]any) error {
+			for _, a := range auths {
+				if k := str(a["key"]); str(a["type"]) == "api" && k != "" && kiroKey() == "" {
+					return setKiroKey(k)
+				}
+			}
+			return nil
 		},
 		give: func(kept json.RawMessage) error {
 			var k string

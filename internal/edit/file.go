@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/yetone/magpie/internal/steady"
 )
 
 // Read returns the file contents, or (nil, nil) when the file does not exist.
@@ -79,7 +81,7 @@ func WriteAtomic(path string, data []byte) error {
 		cleanup()
 		return err
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := steady.Rename(tmpName, path); err != nil {
 		cleanup()
 		return err
 	}

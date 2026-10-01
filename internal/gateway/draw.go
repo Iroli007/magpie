@@ -68,6 +68,20 @@ var codexDrawers = []catalog.Model{
 	{ID: "gpt-image-2.5", Name: "GPT Image 2.5", Released: "2026-06-01"},
 }
 
+// grokDrawers are the image models a Grok subscription (SuperGrok, X Premium+)
+// draws with, at the Imagine API of the backend Grok Build's image_gen tool
+// calls: cli-chat-proxy.grok.com/v1/images/generations.
+var grokDrawers = []catalog.Model{
+	{ID: "grok-imagine-image", Name: "Grok Imagine"},
+	{ID: "grok-imagine-image-quality", Name: "Grok Imagine Quality"},
+}
+
+// drawsGrok is whether p is a Grok subscription, which draws at the Imagine
+// API of the backend Grok Build talks to.
+func drawsGrok(p provider.Provider) bool {
+	return p.Account != nil && p.Account.Agent == "grok" && p.Base(provider.Responses) != ""
+}
+
 // drawsCodex is whether p is a ChatGPT account, which draws at its Codex
 // backend's images API.
 func drawsCodex(p provider.Provider) bool {
@@ -76,10 +90,14 @@ func drawsCodex(p provider.Provider) bool {
 
 // Drawers are the models a provider can draw with: its catalogs' models
 // that make images, those its own model list names that do, and those of
-// its own picks named for images; a ChatGPT account's GPT Image.
+// its own picks named for images; a ChatGPT account's GPT Image, a Grok
+// subscription's Grok Imagine.
 func Drawers(p provider.Provider) []catalog.Model {
-	if drawsCodex(p) {
+	if drawsCodex(p) || drawsGrok(p) {
 		out := slices.Clone(codexDrawers)
+		if drawsGrok(p) {
+			out = slices.Clone(grokDrawers)
+		}
 		for i := range out {
 			out[i].Provider = p.ID
 		}
@@ -129,8 +147,8 @@ func AutoDrawer() string {
 		for _, m := range Drawers(p) {
 			cost := 1e9
 			switch {
-			case drawsCodex(p):
-				cost = 0 // a ChatGPT plan's images come with it
+			case drawsCodex(p), drawsGrok(p):
+				cost = 0 // a ChatGPT or Grok plan's images come with it
 			case m.Price != nil:
 				cost = m.Price.Input + m.Price.Output
 			}
@@ -185,8 +203,9 @@ func (s *Server) images(edit bool) http.HandlerFunc {
 			writeError(w, provider.Chat, 400, "an edit needs the image to edit")
 			return
 		}
-		call := Call{Time: start, From: provider.Chat, Agent: agentOf(r), Model: d.Model}
-		usage.Saw(call.Agent)
+		who := callerOf(r)
+		call := Call{Time: start, From: provider.Chat, Agent: who.agent, Via: who.via, Model: d.Model}
+		usage.Saw(agentOf(r))
 		fail := func(code int, msg string) {
 			call.Status, call.Error, call.Millis = code, msg, time.Since(start).Milliseconds()
 			writeError(w, provider.Chat, code, msg)
@@ -219,7 +238,11 @@ func (s *Server) images(edit bool) http.HandlerFunc {
 			code, err = 502, errors.New(model+" drew nothing"+vendorSaid(out.Text))
 			call.Status = code
 		}
-		usage.Append(usage.Record{Time: start, Agent: call.Agent, Provider: p.ID, Host: p.Where(), Model: model, Requested: call.Model,
+		providerKeyID, providerKeyName := "", ""
+		if p.Account == nil && p.Key != "" {
+			providerKeyID, providerKeyName = provider.KeyID(p.Key), p.KeyName
+		}
+		usage.Append(usage.Record{Time: start, Agent: call.Agent, Via: call.Via, Provider: p.ID, Host: p.Where(), Model: model, Requested: call.Model, ProviderKeyID: providerKeyID, ProviderKeyName: providerKeyName,
 			Input: out.Input, Output: out.Output, Millis: call.Millis, Status: call.Status, Session: sessionOf(r.Header)})
 		if err != nil {
 			call.Error = err.Error()
@@ -436,6 +459,10 @@ func isGoogle(p provider.Provider) bool {
 // viaFor is where model is best asked to draw at p.
 func viaFor(p provider.Provider, model string) drawVia {
 	switch {
+	case p.IsRemoteMagpie():
+		// another magpie's images API asks the model's vendor the way
+		// that model draws there
+		return viaImages
 	case isGoogle(p) && strings.Contains(strings.ToLower(model), "gemini"):
 		return viaGemini
 	case provider.HostOf(p.Base(provider.Chat)) == "openrouter.ai":
@@ -449,7 +476,7 @@ func viaFor(p provider.Provider, model string) drawVia {
 // draw asks the provider for d's images, on the API model draws on there,
 // and on the other when that one isn't served.
 func (s *Server) draw(ctx context.Context, p provider.Provider, model string, d drawing) (drawn, int, error) {
-	if drawsCodex(p) {
+	if drawsCodex(p) || drawsGrok(p) {
 		return s.drawImages(ctx, p, model, d)
 	}
 	if p.Base(provider.Chat) == "" {
@@ -482,12 +509,22 @@ func (s *Server) drawOn(ctx context.Context, p provider.Provider, model string, 
 // send posts to the vendor and reads its answer; a failure's code is the
 // vendor's, with its own message.
 func (s *Server) send(ctx context.Context, p provider.Provider, url, contentType string, body []byte, sign bool) ([]byte, int, error) {
+	return s.sendAs(ctx, p, http.MethodPost, url, contentType, body, sign)
+}
+
+// sendAs is send with the method: a video's progress is asked with a GET.
+func (s *Server) sendAs(ctx context.Context, p provider.Provider, method, url, contentType string, body []byte, sign bool) ([]byte, int, error) {
 	ctx = p.Via(ctx)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, 500, err
 	}
-	req.Header.Set("Content-Type", contentType)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if p.IsRemoteMagpie() {
+		passOnCaller(ctx, req)
+	}
 	if sign {
 		if err := p.Sign(ctx, req, provider.Chat, body); err != nil {
 			return nil, 502, err
@@ -547,13 +584,30 @@ func vendorMessage(b []byte) string {
 // sent along.
 func (s *Server) drawImages(ctx context.Context, p provider.Provider, model string, d drawing) (drawn, int, error) {
 	base := strings.TrimRight(p.Base(provider.Chat), "/")
-	if drawsCodex(p) {
+	if drawsCodex(p) || drawsGrok(p) {
 		base = strings.TrimRight(p.Base(provider.Responses), "/")
 	}
 	var body []byte
 	var ct, url string
 	m := strings.ToLower(model)
-	if len(d.Images) == 0 {
+	if drawsGrok(p) {
+		// Grok's Imagine API takes an aspect ratio, not a size or a quality
+		req := map[string]any{"model": model, "prompt": d.Prompt, "n": d.N, "response_format": "b64_json"}
+		if ar := aspectAmong(d.Size, grokAspects); ar != "" {
+			req["aspect_ratio"] = ar
+		}
+		if len(d.Images) > 0 {
+			var imgs []map[string]string
+			for _, pic := range d.Images {
+				imgs = append(imgs, map[string]string{"url": pic.dataURL(), "type": "image_url"})
+			}
+			req["images"] = imgs
+			ct, url = "application/json", base+"/images/edits"
+		} else {
+			ct, url = "application/json", base+"/images/generations"
+		}
+		body, _ = json.Marshal(req)
+	} else if len(d.Images) == 0 {
 		req := map[string]any{"model": model, "prompt": d.Prompt, "n": d.N}
 		for k, v := range map[string]string{"size": d.Size, "quality": d.Quality, "background": d.Background, "output_format": d.Format} {
 			if v != "" {
@@ -912,6 +966,15 @@ func (s *Server) eachDrawing(n int, ask func() (drawn, int, error)) (drawn, int,
 // that take a ratio name it: the nearest of those they take. "" for none
 // or "auto".
 func aspectOf(size string) string {
+	return aspectAmong(size, []string{"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"})
+}
+
+// grokAspects are the aspect ratios Grok's Imagine API takes.
+var grokAspects = []string{"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "2:1", "1:2", "19.5:9", "9:19.5", "20:9", "9:20"}
+
+// aspectAmong is size as the nearest of the aspect ratios in ratios: a
+// ratio given as one passes through, WIDTHxHEIGHT is matched to the closest.
+func aspectAmong(size string, ratios []string) string {
 	w, h, ok := strings.Cut(strings.ToLower(strings.TrimSpace(size)), "x")
 	if !ok {
 		if strings.Contains(size, ":") {
@@ -925,7 +988,7 @@ func aspectOf(size string) string {
 		return ""
 	}
 	best, bestD := "", math.Inf(1)
-	for _, r := range []string{"1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"} {
+	for _, r := range ratios {
 		a, b, _ := strings.Cut(r, ":")
 		ra, _ := strconv.ParseFloat(a, 64)
 		rb, _ := strconv.ParseFloat(b, 64)

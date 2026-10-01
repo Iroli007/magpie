@@ -76,6 +76,7 @@ func TestAskCursorStatus(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	exe := filepath.Join(home, "cursor-agent")
 	wasExe, wasOut := CursorExecutable, cursorSignedOut
 	t.Cleanup(func() { CursorExecutable, cursorSignedOut = wasExe, wasOut })

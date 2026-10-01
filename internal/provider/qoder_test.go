@@ -196,7 +196,7 @@ func TestQoderRefusedRefreshLapses(t *testing.T) {
 	}
 	// the device token serves only usage: chat still works, so the
 	// account isn't lapsed and usage says why it is missing
-	if _, err := qoderRefreshDevice(context.Background(), "one@x", c.DeviceToken); err == nil || lapsed() != "" ||
+	if _, err := qoderRefreshDevice(context.Background(), "qoder", "one@x", c.DeviceToken); err == nil || lapsed() != "" ||
 		!strings.Contains(err.Error(), "usage is unavailable") || errors.Is(err, ErrQoderSignIn) {
 		t.Fatalf("device refresh refused: %v lapsed %q", err, lapsed())
 	}
