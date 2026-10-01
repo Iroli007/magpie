@@ -193,7 +193,7 @@ func grokSigned(acct *Account, home string) {
 
 // grokTools are the tool types Grok's backend takes; it turns the whole
 // request away over another, as over Codex's freeform apply_patch (custom)
-// or its sub-agent tools, grouped in a namespace.
+// or a namespace wrapper. Its function tools are offered flat.
 var grokTools = map[string]bool{"function": true, "web_search": true, "x_search": true, "image_generation": true,
 	"collections_search": true, "file_search": true, "code_execution": true, "code_interpreter": true,
 	"mcp": true, "shell": true, "tool_search": true}
@@ -209,7 +209,7 @@ var grokTools = map[string]bool{"function": true, "web_search": true, "x_search"
 // tool_choice was set on the request but no tools were specified"), as it
 // would Codex's compaction summary, sent without tools (#378).
 func grokBody(body []byte) []byte {
-	if !bytes.Contains(body, []byte(`"tools"`)) && !bytes.Contains(body, []byte(`"reasoning"`)) && !bytes.Contains(body, []byte(`"tool_choice"`)) {
+	if !bytes.Contains(body, []byte(`"tools"`)) && !bytes.Contains(body, []byte(`"reasoning"`)) && !bytes.Contains(body, []byte(`"tool_choice"`)) && !bytes.Contains(body, []byte(`"namespace"`)) {
 		return body
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
@@ -223,6 +223,19 @@ func grokBody(body []byte) []byte {
 		kept := tools[:0:0]
 		for _, t := range tools {
 			if tm, ok := t.(map[string]any); ok {
+				if tm["type"] == "namespace" {
+					namespace, _ := tm["name"].(string)
+					nested, _ := tm["tools"].([]any)
+					for _, n := range nested {
+						if fn, _ := n.(map[string]any); fn != nil && fn["type"] == "function" {
+							name, _ := fn["name"].(string)
+							fn["name"] = FlatToolName(namespace, name)
+							kept = append(kept, fn)
+						}
+					}
+					dirty = true
+					continue
+				}
 				ty, _ := tm["type"].(string)
 				if !grokTools[ty] {
 					dirty = true
@@ -237,6 +250,9 @@ func grokBody(body []byte) []byte {
 		}
 		m["tools"] = kept
 		if tc, ok := m["tool_choice"].(map[string]any); ok {
+			if tc["type"] == "function" {
+				dirty = grokFlatCall(tc) || dirty
+			}
 			if ty, _ := tc["type"].(string); !grokTools[ty] {
 				delete(m, "tool_choice")
 				dirty = true
@@ -251,6 +267,9 @@ func grokBody(body []byte) []byte {
 	}
 	input, _ := m["input"].([]any)
 	for _, it := range input {
+		if im, _ := it.(map[string]any); im != nil && im["type"] == "function_call" {
+			dirty = grokFlatCall(im) || dirty
+		}
 		if im, ok := it.(map[string]any); ok && im["type"] == "reasoning" {
 			if c, ok := im["content"]; ok && c == nil {
 				delete(im, "content")
@@ -266,6 +285,17 @@ func grokBody(body []byte) []byte {
 		return body
 	}
 	return b
+}
+
+func grokFlatCall(call map[string]any) bool {
+	namespace, _ := call["namespace"].(string)
+	if namespace == "" {
+		return false
+	}
+	name, _ := call["name"].(string)
+	call["name"] = FlatToolName(namespace, name)
+	delete(call, "namespace")
+	return true
 }
 
 // grokHeaders say a request comes from the Grok CLI, which the backend

@@ -1619,6 +1619,7 @@ func codexClientHeader(k string) bool {
 func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.Provider, proto provider.Protocol, model string, body []byte, u *Usage) (status int, msg string, done bool) {
 	body = rewriteModel(body, provider.UpstreamNameIn(wiresOf(r.Context()), p.ID, model))
 	searchFn := false // Codex's tool search sent as a function
+	var namespaces map[string]nsTool
 	switch proto {
 	case provider.Responses:
 		// Responses Lite's tools, as an input item, go as OpenAI takes them
@@ -1629,6 +1630,9 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 		// only the ChatGPT backend runs Codex's tool search as Codex sends it
 		if p.Account == nil || p.Account.Agent != "codex" {
 			body, searchFn = searchAsFunction(body)
+		}
+		if p.Account != nil && p.Account.Agent == "grok" {
+			namespaces = grokNamespaces(body)
 		}
 		body = forVendor(p, body)
 		// xAI's API turns away a tool_choice with no tools beside it ("A
@@ -1791,6 +1795,17 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	if searchFn && sse {
 		search = &searchTidy{}
 	}
+	var namespace *namespaceTidy
+	if len(namespaces) > 0 {
+		if !sse {
+			b, _ := io.ReadAll(rd)
+			sniff.write(b)
+			b, _ = restoreNamespaces(b, namespaces)
+			w.Write(b)
+			return res.StatusCode, "", true
+		}
+		namespace = &namespaceTidy{names: namespaces}
+	}
 	buf := make([]byte, 32<<10)
 	var rerr error
 	for {
@@ -1803,6 +1818,9 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 			}
 			if search != nil {
 				out = search.write(out)
+			}
+			if namespace != nil {
+				out = namespace.write(out)
 			}
 			if _, werr := w.Write(out); werr != nil {
 				return res.StatusCode, "", true
@@ -1820,7 +1838,14 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 		w.Write(tidy.flush())
 	}
 	if search != nil {
-		w.Write(search.flush())
+		out := search.flush()
+		if namespace != nil {
+			out = namespace.write(out)
+		}
+		w.Write(out)
+	}
+	if namespace != nil {
+		w.Write(namespace.flush())
 	}
 	if sse && r.Context().Err() == nil && !sniff.whole() {
 		// the upstream died mid-reply, or ended it short of its last

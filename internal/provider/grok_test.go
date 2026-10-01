@@ -81,7 +81,7 @@ func TestGrokTokenReadsTheCLIsSignIn(t *testing.T) {
 // Codex's freeform apply_patch is left out: Grok's backend turns away a
 // request with a tool type it doesn't know.
 func TestGrokBodyLeavesOutCustomTools(t *testing.T) {
-	in := []byte(`{"model":"grok-4.7","tools":[{"type":"function","name":"shell"},{"type":"custom","name":"apply_patch","format":{"type":"grammar"}},{"type":"namespace","name":"multi_agent_v1","tools":[]},{"type":"web_search","external_web_access":false}],"tool_choice":{"type":"custom","name":"apply_patch"},"max_output_tokens":100}`)
+	in := []byte(`{"model":"grok-4.7","tools":[{"type":"function","name":"shell"},{"type":"custom","name":"apply_patch","format":{"type":"grammar"}},{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent"},{"type":"custom","name":"apply_patch"}]},{"type":"namespace","name":"empty","tools":[]},{"type":"namespace","name":"custom_only","tools":[{"type":"custom","name":"apply_patch"}]},{"type":"web_search","external_web_access":false}],"tool_choice":{"type":"custom","name":"apply_patch"},"max_output_tokens":100}`)
 	var got struct {
 		Tools  []map[string]any `json:"tools"`
 		Choice any              `json:"tool_choice"`
@@ -90,7 +90,7 @@ func TestGrokBodyLeavesOutCustomTools(t *testing.T) {
 	if err := json.Unmarshal(grokBody(in), &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Tools) != 2 || got.Tools[0]["type"] != "function" || len(got.Tools[1]) != 1 || got.Tools[1]["type"] != "web_search" || got.Choice != nil || got.Max != 100 {
+	if len(got.Tools) != 3 || got.Tools[0]["type"] != "function" || got.Tools[1]["name"] != "collaboration__spawn_agent" || len(got.Tools[2]) != 1 || got.Tools[2]["type"] != "web_search" || got.Choice != nil || got.Max != 100 {
 		t.Fatalf("%+v", got)
 	}
 	same := []byte(`{"tools":[{"type":"function","name":"x"}],"tool_choice":"auto"}`)
@@ -214,5 +214,31 @@ func TestGrokExecutableFinds(t *testing.T) {
 	t.Setenv("GROK_BIN_DIR", filepath.Dir(custom))
 	if p := GrokExecutable(); p != custom {
 		t.Fatalf("GROK_BIN_DIR: %q", p)
+	}
+}
+
+func TestGrokBodyNamespacedCalls(t *testing.T) {
+	in := []byte(`{"tools":[{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent","parameters":{"type":"object"},"strict":true}]},{"type":"function","name":"exec_command"}],"tool_choice":{"type":"function","name":"spawn_agent","namespace":"collaboration"},"input":[{"type":"function_call","call_id":"c1","name":"spawn_agent","namespace":"collaboration","arguments":"{}"},{"type":"function_call_output","call_id":"c1","output":"ok"},{"type":"function_call","call_id":"c2","name":"exec_command","arguments":"{}"}]}`)
+	var q struct {
+		Tools  []map[string]any `json:"tools"`
+		Choice map[string]any   `json:"tool_choice"`
+		Input  []map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(grokBody(in), &q); err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Tools) != 2 || q.Tools[0]["name"] != "collaboration__spawn_agent" || q.Tools[0]["strict"] != true || q.Tools[0]["parameters"] == nil || q.Tools[1]["name"] != "exec_command" {
+		t.Fatalf("tools: %+v", q.Tools)
+	}
+	if q.Choice["name"] != "collaboration__spawn_agent" || q.Choice["namespace"] != nil || q.Input[0]["name"] != q.Choice["name"] || q.Input[0]["namespace"] != nil {
+		t.Fatalf("choice: %+v, input: %+v", q.Choice, q.Input)
+	}
+	if q.Input[0]["call_id"] != "c1" || q.Input[1]["call_id"] != "c1" || q.Input[1]["output"] != "ok" || q.Input[2]["name"] != "exec_command" {
+		t.Fatalf("history: %+v", q.Input)
+	}
+	// A later turn may carry the old call without repeating the tools.
+	b := grokBody([]byte(`{"input":[{"type":"function_call","name":"spawn_agent","namespace":"collaboration","call_id":"c1","arguments":"{}"}]}`))
+	if !strings.Contains(string(b), `"name":"collaboration__spawn_agent"`) || strings.Contains(string(b), `"namespace"`) {
+		t.Fatalf("history without tools: %s", b)
 	}
 }

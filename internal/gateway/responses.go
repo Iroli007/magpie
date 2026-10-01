@@ -1,13 +1,13 @@
 package gateway
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/yetone/magpie/internal/provider"
 )
 
 // ---- OpenAI Responses -------------------------------------------------------
@@ -88,7 +88,7 @@ func searchFound(tools []rTool) string {
 		case "namespace":
 			for _, nt := range t.Tools {
 				if nt.Type == "function" {
-					names = append(names, flatName(t.Name, nt.Name))
+					names = append(names, provider.FlatToolName(t.Name, nt.Name))
 				}
 			}
 		}
@@ -97,19 +97,6 @@ func searchFound(tools []rTool) string {
 		return "No tools matched the search."
 	}
 	return "These tools are now available to call: " + strings.Join(names, ", ")
-}
-
-// flatName is the name a namespaced tool is offered to a model under, which
-// takes one flat name: namespace__name, as Codex names an MCP server's tools.
-// A name longer than the 64 characters APIs allow is cut and made unique by
-// a hash of the whole.
-func flatName(namespace, name string) string {
-	flat := namespace + "__" + name
-	if len(flat) <= 64 {
-		return flat
-	}
-	sum := sha256.Sum256([]byte(namespace + "\x00" + name))
-	return flat[:55] + "_" + hex.EncodeToString(sum[:4])
 }
 
 type rRequest struct {
@@ -194,7 +181,7 @@ func parseResponses(body []byte) (*Request, error) {
 			case it.Type == "function_call":
 				name := it.Name
 				if it.Namespace != "" {
-					name = flatName(it.Namespace, it.Name)
+					name = provider.FlatToolName(it.Namespace, it.Name)
 				}
 				r.Messages = append(r.Messages, Message{Role: "assistant", Parts: []Part{{Kind: ToolCall, ID: it.CallID, Name: name, Args: parseArgs(string(it.Arguments))}}})
 			case it.Type == "tool_search_call":
@@ -258,7 +245,7 @@ func parseResponses(body []byte) (*Request, error) {
 				if nt.Type != "function" {
 					continue
 				}
-				flat := flatName(t.Name, nt.Name)
+				flat := provider.FlatToolName(t.Name, nt.Name)
 				offer(i, Tool{Name: flat, Description: nt.Description, Schema: nt.Parameters, Strict: nt.Strict != nil && *nt.Strict}, nsTool{Namespace: t.Name, Name: nt.Name})
 			}
 		case toolSearch:
@@ -294,7 +281,7 @@ func parseResponses(body []byte) (*Request, error) {
 					switch {
 					case tool.Type == "function" && tool.Name != "":
 						if tool.Namespace != "" {
-							allowed[flatName(tool.Namespace, tool.Name)] = true
+							allowed[provider.FlatToolName(tool.Namespace, tool.Name)] = true
 						} else {
 							allowed[tool.Name] = true
 						}
