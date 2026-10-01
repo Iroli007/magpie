@@ -72,6 +72,9 @@ func TestCompactPageMatchesLedger(t *testing.T) {
 	for i := 0; i < 180; i++ {
 		at := Today.Since(now).AddDate(0, 0, -i%80).Add(time.Duration(i%24) * time.Hour)
 		r := Record{Time: at, Agent: []string{"claude", "codex", "opencode"}[i%3], Provider: []string{"a", "b"}[i%2], Model: "m", Input: 10 + i, Output: 2, CacheRead: 3, Status: 200, FirstText: 7, TTFT: 5, Millis: 100, Session: fmt.Sprint(i), RequestID: fmt.Sprintf("r%d", i), NativeSession: fmt.Sprint(i)}
+		if i%4 == 0 {
+			r.Model = "other"
+		}
 		if i%9 == 0 {
 			r.Status = 429
 			r.Error = "limited"
@@ -80,7 +83,7 @@ func TestCompactPageMatchesLedger(t *testing.T) {
 			r.Rejected = true
 		}
 		recs = append(recs, r)
-		c := sessions.Call{Time: at.Add(time.Second), Agent: r.Agent, Session: r.Session, Model: "m", Tokens: sessions.Tokens{Input: r.Input, Output: r.Output, CacheRead: r.CacheRead}, File: "/session", To: int64(i + 1)}
+		c := sessions.Call{Time: at.Add(time.Second), Agent: r.Agent, Session: r.Session, Model: r.Model, Tokens: sessions.Tokens{Input: r.Input, Output: r.Output, CacheRead: r.CacheRead}, File: "/session", To: int64(i + 1)}
 		switch i % 5 {
 		case 0:
 			c.RequestID = r.RequestID
@@ -139,7 +142,7 @@ func TestCompactPageMatchesLedger(t *testing.T) {
 		cs := slices.DeleteFunc(slices.Clone(logs), func(c sessions.Call) bool { return c.Time.Before(since) })
 		rows, sum, agents, providers := ledgerWith(since, Filter{}, rs, cs)
 		all := Ledgered{rows, sum, agents, providers}
-		for _, f := range []Filter{{}, {Agent: "claude"}, {Provider: "a"}, {Failed: true}, {Query: "LOCAL"}, {Agent: "codex", Provider: UnknownProvider}, {Query: "no match"}} {
+		for _, f := range []Filter{{}, {Agent: "claude"}, {Provider: "a"}, {Model: "m"}, {Agent: "claude", Provider: "a", Model: "m"}, {Failed: true}, {Query: "LOCAL"}, {Agent: "codex", Provider: UnknownProvider}, {Query: "no match"}} {
 			for _, offset := range []int{0, 7, 500, int(^uint(0) >> 1)} {
 				t.Run(fmt.Sprintf("%s/%+v/%d", period, f, offset), func(t *testing.T) {
 					equalPage(t, buildRequestPage(period, f, offset, 7, gateway, []*rowChunk{local}), pageFromLedger(period, f, offset, 7, all))

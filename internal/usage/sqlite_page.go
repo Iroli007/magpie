@@ -113,7 +113,8 @@ func indexedRequestPage(db *sql.DB, p Period, f Filter, offset, limit int, chunk
 		first = time.Unix(0, firstStamp.Int64)
 	}
 	groups, seriesGroups := map[string]map[string]*Share{}, map[string]map[string]*Share{}
-	for _, d := range Dimensions {
+	facetFilters := make([]Filter, len(Dimensions))
+	for i, d := range Dimensions {
 		g := f
 		switch d {
 		case "agent":
@@ -123,16 +124,13 @@ func indexedRequestPage(db *sql.DB, p Period, f Filter, offset, limit int, chunk
 		case "model":
 			g.Model = ""
 		}
+		facetFilters[i] = g
 		groups[d], err = indexShares(tx, since, g, d)
 		if err != nil {
 			return out, err
 		}
 		if g == f {
-			seriesGroups[d] = map[string]*Share{}
-			for key, value := range groups[d] {
-				copy := *value
-				seriesGroups[d][key] = &copy
-			}
+			seriesGroups[d] = groups[d]
 			continue
 		}
 		seriesGroups[d], err = indexShares(tx, since, f, d)
@@ -169,25 +167,18 @@ func indexedRequestPage(db *sql.DB, p Period, f Filter, offset, limit int, chunk
 				if first.IsZero() || r.Time.Before(first) {
 					first = r.Time
 				}
-				for _, d := range Dimensions {
-					addShare(seriesGroups[d], r.key(d), r)
+				for i, d := range Dimensions {
+					if facetFilters[i] != f {
+						addShare(seriesGroups[d], r.key(d), r)
+					}
 				}
 			}
 		}
 		if r.IsRejected() {
 			return
 		}
-		for _, d := range Dimensions {
-			g := f
-			switch d {
-			case "agent":
-				g.Agent = ""
-			case "provider":
-				g.Provider = ""
-			case "model":
-				g.Model = ""
-			}
-			if g.keeps(r.Record) {
+		for i, d := range Dimensions {
+			if facetFilters[i].keeps(r.Record) {
 				addShare(groups[d], r.key(d), r)
 			}
 		}

@@ -36,12 +36,6 @@ CREATE TABLE IF NOT EXISTS calls (
  timed INTEGER NOT NULL, ttft INTEGER NOT NULL, decode_ms INTEGER NOT NULL, decode_out INTEGER NOT NULL,
  session TEXT NOT NULL, native_session TEXT NOT NULL, request_id TEXT NOT NULL, millis INTEGER NOT NULL,
  search TEXT NOT NULL, raw TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS calls_time ON calls(stamp DESC,seq DESC);
-CREATE INDEX IF NOT EXISTS calls_agent ON calls(agent,stamp DESC,seq DESC);
-CREATE INDEX IF NOT EXISTS calls_provider ON calls(provider,stamp DESC,seq DESC);
-CREATE INDEX IF NOT EXISTS calls_model ON calls(model,stamp DESC,seq DESC);
-CREATE INDEX IF NOT EXISTS calls_route ON calls(route,stamp DESC,seq DESC);
-CREATE INDEX IF NOT EXISTS calls_match ON calls(stamp,seq) WHERE session<>'' OR native_session<>'' OR request_id<>'';
 CREATE TABLE IF NOT EXISTS rollup (
  stamp INTEGER NOT NULL, slot INTEGER NOT NULL, day INTEGER NOT NULL,
  agent TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, failed INTEGER NOT NULL, rejected INTEGER NOT NULL,
@@ -49,6 +43,15 @@ CREATE TABLE IF NOT EXISTS rollup (
  cost REAL NOT NULL, unpriced INTEGER NOT NULL, timed INTEGER NOT NULL, ttft INTEGER NOT NULL, decode_ms INTEGER NOT NULL, decode_out INTEGER NOT NULL,
  PRIMARY KEY(slot,agent,provider,model,failed,rejected)) WITHOUT ROWID;
 PRAGMA user_version=3;`
+
+const indexIndexes = `
+CREATE INDEX IF NOT EXISTS calls_time ON calls(stamp DESC,seq DESC);
+CREATE INDEX IF NOT EXISTS calls_agent ON calls(agent,stamp DESC,seq DESC);
+CREATE INDEX IF NOT EXISTS calls_provider ON calls(provider,stamp DESC,seq DESC);
+CREATE INDEX IF NOT EXISTS calls_model ON calls(model,stamp DESC,seq DESC);
+CREATE INDEX IF NOT EXISTS calls_route ON calls(route,stamp DESC,seq DESC);
+CREATE INDEX IF NOT EXISTS calls_match ON calls(stamp,seq) WHERE session<>'' OR native_session<>'' OR request_id<>'';
+`
 
 func openUsageIndex(meta string, price func(Record, string) Row) (*sql.DB, error) {
 	path := usageIndexPath()
@@ -201,6 +204,11 @@ func syncUsageIndex(db *sql.DB, meta string, price func(Record, string) Row) err
 	}
 	_, err = tx.ExecContext(ctx, "INSERT INTO rollup SELECT MIN(stamp),slot,day,agent,provider,model,failed,rejected,COUNT(*),SUM(input),SUM(output),SUM(cache_read),SUM(cache_write),SUM(reasoning),SUM(cost),SUM(unpriced),SUM(timed),SUM(ttft),SUM(decode_ms),SUM(decode_out) FROM calls WHERE seq>=? GROUP BY slot,day,agent,provider,model,failed,rejected ON CONFLICT(slot,agent,provider,model,failed,rejected) DO UPDATE SET "+strings.Join(updates, ","), importOffset)
 	if err != nil {
+		return err
+	}
+	// Build secondary indexes after the initial bulk import instead of updating
+	// every B-tree for each inserted record. Existing indexes stay incremental.
+	if _, err = tx.ExecContext(ctx, indexIndexes); err != nil {
 		return err
 	}
 	current, err := os.Stat(Path())
