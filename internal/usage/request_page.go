@@ -202,7 +202,8 @@ func queryPage(p Period, f Filter, offset, limit int, readSource func(sessions.C
 	cfg := settings.Load()
 	prices, _ := json.Marshal(cfg.ModelPrices)
 	wires, _ := json.Marshal(cfg.ModelWires)
-	meta := fmt.Sprintf("%s|%s|%s|%s|%s|%s", ids, renamed, prices, wires, statKey(provider.Path()), statKey(catalog.CachePath()))
+	indexMeta := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", renamed, prices, wires, statKey(provider.Path()), statKey(catalog.CachePath()), statKey(catalog.LivePath("antigravity")), time.Local.String())
+	meta := fmt.Sprintf("%s|%s", ids, indexMeta)
 	h := sha256.New()
 	for _, root := range sessions.DesktopDataDirs() {
 		for _, kind := range []string{"local-agent-mode-sessions", "claude-code-sessions"} {
@@ -212,7 +213,7 @@ func queryPage(p Period, f Filter, offset, limit int, readSource func(sessions.C
 			}
 		}
 	}
-	meta += fmt.Sprintf("|%x|%s", h.Sum(nil), statKey(catalog.LivePath("antigravity")))
+	meta += fmt.Sprintf("|%x", h.Sum(nil))
 	h.Reset()
 	fmt.Fprint(h, meta, statKey(Path()), time.Now().Format("2006-01-02 MST"))
 	for _, s := range sources {
@@ -311,7 +312,7 @@ func queryPage(p Period, f Filter, offset, limit int, readSource func(sessions.C
 			delete(idx.chunks, path)
 		}
 	}
-	db, indexErr := openUsageIndex(meta+"|"+time.Local.String(), priceRow)
+	db, indexErr := openUsageIndex(indexMeta, priceRow)
 	var page RequestPage
 	if indexErr == nil {
 		page, indexErr = indexedRequestPage(db, p, f, offset, limit, chunks, priceRow)

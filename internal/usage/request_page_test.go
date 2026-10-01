@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yetone/magpie/internal/catalog"
+	"github.com/yetone/magpie/internal/provider"
 	"github.com/yetone/magpie/internal/sessions"
 )
 
@@ -209,6 +211,7 @@ func TestRequestPageModelRankingKeepsAlternatives(t *testing.T) {
 
 func TestQueryPageSourceAndIdentityInvalidation(t *testing.T) {
 	pageHome(t)
+	provider.Logins("") // finish login discovery before installing the changing fixture
 	sessionAuth(t, sessions.CodexDir(), "a", "u", "one@example.com")
 	path := filepath.Join(sessions.CodexDir(), "sessions", "rollout-2026-09-30T00-00-00-test.jsonl")
 	os.MkdirAll(filepath.Dir(path), 0700)
@@ -258,13 +261,45 @@ func TestQueryPageSourceAndIdentityInvalidation(t *testing.T) {
 	check(3, "", false)
 	appendFile(Path(), string(r)+"\n")
 	check(4, "", false)
+	// Observe actual index writes, so a rebuild followed by identical results
+	// cannot accidentally pass the identity-invalidation regression.
+	db, err := sql.Open("sqlite", usageIndexPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, err := db.Exec(`CREATE TABLE index_writes (kind TEXT);
+CREATE TRIGGER watch_insert AFTER INSERT ON calls BEGIN INSERT INTO index_writes VALUES ('insert'); END;
+CREATE TRIGGER watch_delete AFTER DELETE ON calls BEGIN INSERT INTO index_writes VALUES ('delete'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	sessionAuth(t, sessions.CodexDir(), "a", "u", "updated@example.com")
+	check(4, "updated@example.com", true)
+	sessionAuth(t, sessions.CodexDir(), "other", "u", "wrong@example.com")
+	check(4, "", false)
+	var writes int
+	if err := db.QueryRow("SELECT COUNT(*) FROM index_writes").Scan(&writes); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 0 {
+		t.Fatalf("identity changes rewrote %d gateway index rows", writes)
+	}
 	os.WriteFile(Path(), []byte(string(r)+"\n"), 0600)
 	check(3, "", false)
 	// Reprice cached rows when the shared catalogue changes.
+	if _, err := db.Exec("DELETE FROM index_writes"); err != nil {
+		t.Fatal(err)
+	}
 	b, _ := os.ReadFile(catalog.CachePath())
 	os.WriteFile(catalog.CachePath(), []byte(strings.Replace(string(b), `"input":2`, `"input":9`, 1)), 0600)
 	catalog.Reset()
 	check(3, "", false)
+	if err := db.QueryRow("SELECT COUNT(*) FROM index_writes").Scan(&writes); err != nil {
+		t.Fatal(err)
+	}
+	if writes == 0 {
+		t.Fatal("pricing changes did not update the gateway index")
+	}
 	os.Remove(path)
 	check(1, "", false)
 	os.Remove(Path())
