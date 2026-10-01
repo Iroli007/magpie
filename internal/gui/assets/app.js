@@ -10306,6 +10306,7 @@ function renderSettings() {
   renderImages(s, keep);
   renderSearch(s);
   renderRedact(s, keep);
+  renderOTel(s, keep);
   renderLAN(s);
   renderSync();
 
@@ -11024,6 +11025,54 @@ function renderRedact(s, keep) {
     onOff(!s.noStats, (on) => savePrefs({ ...keep, noStats: !on })));
 }
 
+function renderOTel(s, keep) {
+  const box = $("#otelList");
+  box.replaceChildren();
+  let config = { ...(s.otel || {}) };
+  const row = (id, name, sub, control) => {
+    const r = el("div", "row pref");
+    r.id = id;
+    const who = el("div", "who");
+    who.append(el("div", "name", t(name)), el("div", "sub", t(sub)));
+    const val = el("div", "val");
+    val.append(control);
+    r.append(who, val);
+    box.append(r);
+  };
+  const save = (change) => {
+    config = { ...config, ...change };
+    savePrefs({ ...keep, otel: { ...config } });
+  };
+  row("otelExportRow", "OTLP export", "Send model, token, status and timing metadata to your collector. Prompts, replies and account credentials stay local",
+    segs([["off", t("Off")], ["on", t("On")]], config.enabled ? "on" : "off", (v) => save({ enabled: v === "on" })));
+  const endpoint = input(config.endpoint || "", "http://localhost:4318", "url");
+  endpoint.className = "words";
+  endpoint.setAttribute("aria-label", t("OTLP endpoint"));
+  endpoint.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") endpoint.blur(); };
+  endpoint.onchange = () => save({ endpoint: endpoint.value.trim().replace(/\/+$/, "") });
+  row("otelEndpointRow", "OTLP endpoint", "Base URL of your collector, or Langfuse's /api/public/otel endpoint", endpoint);
+  const headers = input(Object.entries(config.headers || {}).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join(","), "Authorization=Bearer%20token", "password");
+  headers.className = "words";
+  headers.setAttribute("aria-label", t("OTLP headers"));
+  headers.autocomplete = "off";
+  headers.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") headers.blur(); };
+  headers.onchange = () => {
+    const values = {};
+    try {
+      for (const part of headers.value.split(",").filter((p) => p.trim())) {
+        const i = part.indexOf("=");
+        if (i < 1) throw new Error(t("Use comma-separated name=value headers"));
+        values[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+      }
+      save({ headers: values });
+    } catch (e) { toast(e.message, true); }
+  };
+  row("otelHeadersRow", "OTLP headers", "Comma-separated name=value pairs; percent-encode spaces and commas in values", headers);
+  row("otelMetricsRow", "Export metrics", "Also send duration and token histograms. Leave off for a traces-only service such as Langfuse",
+    segs([["off", t("Off")], ["on", t("On")]], config.metrics ? "on" : "off", (v) => save({ metrics: v === "on" })));
+  if (s.otelEnv) box.append(el("div", "sub", t("Environment variables override these saved OTLP preferences")));
+}
+
 // renderRedactRules: the user's own rules for secrets magpie's don't know, a
 // gateway's oc_sk_… key say (#195) — one row each, and a row to add one by a
 // prefix or a regular expression. They are set on their own, all of them each
@@ -11255,6 +11304,7 @@ function wbCheckinLine(r) {
 function prefsKeep(s) {
   return { theme: s.theme, lang: s.lang, tray: s.tray, dock: !!s.dock, dockWindow: !!s.dockWindow, proxy: s.proxy || "",
     sessionTerminal: s.sessionTerminal || "",
+    otel: s.otel || {},
     trayUsages: s.trayUsages || [],
     redact: !!s.redact, redactPersonal: !!s.redactPersonal, redactWords: s.redactWords || [], codexWarmup: s.codexWarmup || "",
     claudeWarmup: s.claudeWarmup || "", codexWarmAt: s.codexWarmAt || "", claudeWarmAt: s.claudeWarmAt || "", workbuddyCheckin: !!s.workbuddyCheckin, noStats: !!s.noStats,

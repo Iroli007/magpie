@@ -1078,3 +1078,12 @@ with a known session creator. Unknown gateway providers retain their own label.
 Creator emails and recorded provider IDs appear separately in request details.
 Third-party OpenCode gateway calls retain the actual relay. These regressions
 run in Chromium and WebKit, English and Chinese.
+
+`otel.test.cjs` checks OTLP export and metrics start off, endpoint and masked
+headers save in English and Chinese, environment overrides are indicated, and
+other preference saves retain OTLP choices. It runs in Chromium and WebKit
+with the real assets and an isolated API fixture:
+
+```sh
+node --test internal/gui/tests/otel.test.cjs
+```

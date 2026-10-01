@@ -874,6 +874,47 @@ For S3:
 - A server without conditional writes is supported. There magpie checks the
   object's ETag just before each write.
 
+## OTLP export
+
+Settings → Observability can export gateway request metadata over OTLP/HTTP
+(JSON). Export is off by default. Set the collector's base URL and optional
+headers, then enable **OTLP export**. **Export metrics** is separately off by
+default; enable it for a collector that accepts duration and token histograms.
+No restart is needed for saved settings.
+
+For `magpie serve`, environment variables override the saved preferences:
+
+```sh
+MAGPIE_OTEL_ENABLED=true MAGPIE_OTEL_ENDPOINT=http://localhost:4318 magpie serve
+```
+
+- `MAGPIE_OTEL_ENABLED`: `true` or `false`; an endpoint alone does not enable export.
+- `MAGPIE_OTEL_ENDPOINT`: an HTTP(S) base URL; `/v1/traces` and `/v1/metrics` are appended.
+- `MAGPIE_OTEL_HEADERS`: comma-separated `name=value` pairs, for example
+  `Authorization=Bearer%20token`. Percent-encode spaces and commas in values.
+- `MAGPIE_OTEL_METRICS`: `true` or `false`, off by default.
+
+For Langfuse, use `https://<your-langfuse-host>/api/public/otel` as the base
+URL and `Authorization=Basic%20<base64(public-key:secret-key)>` as the header.
+Leave metrics off. This uses Langfuse's OTLP ingestion endpoint.
+
+Traces include agent, provider, model, token counts (including cache and
+reasoning), HTTP status, timing, and route ID. Attempts with the same route ID
+share a trace ID. Metrics group duration and input/output token histograms by
+agent, provider, model, operation and error status. Prompt/reply text, tool
+arguments, sessions and provider account names/keys are never exported.
+
+Export runs in the background with a bounded queue (128 records) and batches
+of up to 32 records, flushed every five seconds. A full queue drops telemetry
+without delaying gateway requests. Network errors and HTTP 429/502/503/504
+are retried up to two times; other errors and partial rejection are logged
+without the collector's response body. Each HTTP attempt times out after
+three seconds, and shutdown allows at most three seconds to drain. This is
+best-effort export; local usage records remain available if it fails.
+Requests follow magpie's proxy setting, with loopback collectors going direct.
+Queued records are discarded if export is disabled or the destination or
+credentials change before sending. Redirects are not followed.
+
 ## Files
 
 - `~/.config/magpie/profiles.json` — saved profiles

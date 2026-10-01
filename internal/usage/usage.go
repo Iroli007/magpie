@@ -1,7 +1,7 @@
 // Package usage keeps the token count of every call the gateway serves, so
 // magpie can show what each agent and model consumed and roughly what it cost.
-// Records go to one JSON-lines file next to providers.json; nothing leaves
-// the machine.
+// Records go to one JSON-lines file next to providers.json. Metadata leaves
+// the machine only when OTLP export is explicitly enabled.
 package usage
 
 import (
@@ -22,6 +22,7 @@ import (
 
 // Record is one call.
 type Record struct {
+	Operation       string    `json:"operation,omitempty"`
 	RouteID         int64     `json:"route_id,omitempty"` // the gateway Route, shared by its attempts
 	Time            time.Time `json:"t"`
 	Agent           string    `json:"agent"` // magpie agent id, or the client's product name
@@ -103,6 +104,7 @@ func Append(r Record) {
 	if r.Time.IsZero() {
 		r.Time = time.Now()
 	}
+	offerOTel(r)
 	b, err := json.Marshal(r)
 	if err != nil {
 		return
