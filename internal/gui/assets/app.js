@@ -9021,11 +9021,13 @@ function ledParams(extra) {
 }
 
 // quiet: a refresh while it's looked at, redrawn only on a change
+let ledRequest = 0;
 async function loadLedger(quiet) {
+  const request = ++ledRequest;
   if (!ledger && !quiet) renderLedgerLoading();
   const want = ledParams({ offset: ledOffset, limit: LED_PAGE });
   const l = await api("usage/requests?" + want);
-  if (want !== ledParams({ offset: ledOffset, limit: LED_PAGE })) return; // another page or filter was picked meanwhile
+  if (request !== ledRequest || want !== ledParams({ offset: ledOffset, limit: LED_PAGE })) return; // a newer request, page or filter was picked meanwhile
   if (quiet && JSON.stringify(l) === JSON.stringify(ledger)) return;
   ledger = l;
   if (view === "usage" && usageTab === "requests") renderLedger();

@@ -108,6 +108,24 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert((await p.locator("#usageReload").getAttribute("title")).startsWith(w.now), await p.locator("#usageReload").getAttribute("title"));
       assert(/\d{1,2}:\d{2}:\d{2}/.test(await p.locator("#usageReload").getAttribute("title")), "when they were read");
 
+      let olderReply;
+      let overlaps = 0;
+      await p.route("**/api/usage/requests?**", async (route) => {
+        const input = ++overlaps === 1 ? 100 : 200;
+        if (overlaps === 1) await new Promise(resolve => { olderReply = resolve; });
+        await route.fulfill({ json: { period: "today", rows: [{ ...ROWS[0], in: input }], offset: 0, total: 1, calls: 1, errors: 0, input, output: 10, cache_read: 0, cache_write: 0, reasoning: 0, cost: 0.01, unpriced: 0, agents: [], providers: [] } });
+      });
+      await pass(p, 65e3);
+      for (let i = 0; i < 50 && !olderReply; i++) await p.waitForTimeout(20);
+      assert(olderReply, "first refresh started");
+      await p.locator("#usageReload").click();
+      await p.waitForFunction(() => document.querySelector("#ledSum").textContent.includes("200"));
+      olderReply();
+      await p.waitForTimeout(250);
+      const summary = await p.locator("#ledSum").textContent();
+      t.diagnostic("After older response arrives: " + summary);
+      assert(summary.includes("200"), "older response must not overwrite the newer 200-token result");
+
       // on Overview it reads the summary, and the allowances are read now too
       await p.locator("#usageTab .opt").nth(0).click();
       await p.locator("#stats .kpi").first().waitFor();
