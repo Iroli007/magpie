@@ -158,6 +158,42 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
     for (const lang of ["en", "zh"]) {
       const w = L[lang];
+      for (const [key, name, removed, all] of [
+        ["agent", "Claude Code", "claude", lang === "zh" ? "全部 Agent" : "All agents"],
+        ["provider", "Relay", "relay", lang === "zh" ? "全部供应商" : "All providers"],
+      ]) {
+        await t.test(lang + ": changing period clears an unavailable " + key + " and reloads", async () => {
+          const asked = [];
+          const { page: tab, errors } = await open(lang, "light", asked);
+          await tab.route("**/api/usage/requests?**", async (route) => {
+            const q = new URL(route.request().url()).searchParams;
+            asked.push(q);
+            const data = page(q);
+            const available = q.get("period") === "7d" ? ROWS.filter(r => r[key] !== removed) : ROWS;
+            const rows = available.filter(r => !q.get(key) || r[key] === q.get(key));
+            data.agents = data.agents.filter(a => available.some(r => r.agent === a.id));
+            data.providers = [
+              { id: "relay", name: "Relay" }, { id: "anthropic", name: "Claude" }, { id: "deepseek", name: "DeepSeek" },
+            ].filter(p => available.some(r => r.provider === p.id));
+            Object.assign(data, {
+              rows: rows.slice(0, 100), offset: 0, total: rows.length, calls: rows.length,
+              input: rows.reduce((n, r) => n + r.in, 0),
+            });
+            await route.fulfill({ json: data });
+          });
+          await tab.locator("#period .opt").nth(2).click();
+          await lastAsked(tab, asked, q => q.get("period") === "30d");
+          await tab.locator(key === "agent" ? "#ledAgent" : "#ledProvider").click();
+          await tab.locator(".sess-menu .pm-item", { hasText: name }).click();
+          await lastAsked(tab, asked, q => q.get(key) === removed);
+          await tab.locator("#period .opt").nth(1).click();
+          await lastAsked(tab, asked, q => q.get("period") === "7d" && !q.has(key) && q.get("offset") === "0");
+          assert.equal(await tab.locator(key === "agent" ? "#ledAgent" : "#ledProvider").textContent(), all);
+          assert.equal(await tab.locator(".led-row").count(), Math.min(100, ROWS.filter(r => r[key] !== removed).length));
+          assert.deepEqual(errors, []);
+          await tab.close();
+        });
+      }
       await t.test(lang + ": an unavailable caller filter is cleared", async () => {
         const asked = [];
         const { page: tab, errors } = await open(lang, "light", asked);

@@ -9397,10 +9397,16 @@ const LED_COLS = [
 function renderLedger() {
   const l = ledger;
   const callers = l.callerKeys || [];
-  if (ledCallerKey && !callers.some((k) => k.id === ledCallerKey)) {
-    ledCallerKey = "";
+  const providers = l.providers || [];
+  const missingAgent = ledAgent && !l.agents.some((a) => a.id === ledAgent);
+  const missingProvider = ledProvider && !providers.some((p) => p.id === ledProvider);
+  const missingCaller = ledCallerKey && !callers.some((k) => k.id === ledCallerKey);
+  if (missingAgent || missingProvider || missingCaller) {
+    if (missingAgent) ledAgent = "";
+    if (missingProvider) ledProvider = "";
+    if (missingCaller) ledCallerKey = "";
     ledOffset = 0;
-    // Reload the rows too: this response still belongs to the missing key.
+    // Reload the rows too: this response still belongs to the missing filters.
     loadLedger().catch((e) => status(e.message, "err"));
     return;
   }
@@ -9419,10 +9425,7 @@ function renderLedger() {
   }
 
   // the filters: the agents with calls in the period, and failures alone
-  if (ledAgent && !l.agents.some((a) => a.id === ledAgent)) ledAgent = "";
   sessPick($("#ledAgent"), "All agents", ledAgent, l.agents.map((a) => ({ v: a.id, name: a.name, note: "" })), "Agent", (v) => { ledAgent = v; ledOffset = 0; loadLedger().catch((e) => status(e.message, "err")); });
-  const providers = l.providers || [];
-  if (ledProvider && !providers.some((p) => p.id === ledProvider)) ledProvider = "";
   sessPick($("#ledProvider"), "All providers", ledProvider, providers.map((p) => ({ v: p.id, name: t(p.name), note: "" })), "Provider", (v) => { ledProvider = v; ledOffset = 0; loadLedger().catch((e) => status(e.message, "err")); });
   sessPick($("#ledKey"), "All gateway keys", ledCallerKey, callers.map((k) => ({
     v: k.id, name: k.name, note: "",
