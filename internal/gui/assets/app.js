@@ -9133,6 +9133,7 @@ function ledDetail(r, cols) {
 // What came is kept here while the list is looked at, so a row opened again, or
 // drawn again as the list is read anew, doesn't ask again.
 const ledContent = new Map();
+const ledExpanded = new WeakSet();
 function ledLoadContent(r) {
   const key = ledKey(r);
   if (!ledContent.has(key)) {
@@ -9180,12 +9181,13 @@ function ledSaid(p) {
   const part = el("div", "cx-part");
   part.append(head, words);
   if (p.text.length > 700 || p.text.split("\n").length > 9) {
-    part.classList.add("clamp");
-    const more = el("button", "text cx-more", t("Show full content"));
+    part.classList.toggle("clamp", !ledExpanded.has(p));
+    const more = el("button", "text cx-more", t(ledExpanded.has(p) ? "Collapse content" : "Show full content"));
     more.type = "button";
     more.onclick = () => {
-      const open = part.classList.toggle("clamp");
-      more.textContent = t(open ? "Show full content" : "Collapse content");
+      const clamped = part.classList.toggle("clamp");
+      if (clamped) ledExpanded.delete(p); else ledExpanded.add(p);
+      more.textContent = t(clamped ? "Show full content" : "Collapse content");
     };
     part.append(more);
   }
